@@ -10,7 +10,6 @@ from typing import Any
 from polymarket_bot.config import AppConfig
 from polymarket_bot.logging_utils import DecisionLogger
 from polymarket_bot.market_data import MarketDataClient, MarketSnapshot
-from polymarket_bot.market_data.normalize import snapshot_from_payloads
 from polymarket_bot.market_data.replay_client import ReplayClient
 from polymarket_bot.paper import maker, near_resolution
 from polymarket_bot.paper.fills import fill_reason
@@ -59,42 +58,24 @@ def run_paper(
         ticks=n_ticks,
     )
 
-    replay = client if isinstance(client, ReplayClient) else None
+    is_replay = isinstance(client, ReplayClient)
 
     for tick in range(n_ticks):
         snaps: dict[str, MarketSnapshot] = {}
         universe = chosen
-        if replay is not None:
-            listed = replay.list_markets(limit=config.scanner.max_markets_to_list, active=True, closed=False)
+        if is_replay:
+            listed = client.list_markets(limit=config.scanner.max_markets_to_list, active=True, closed=False)
             universe = []
             for market in listed:
-                slug = market["slug"]
-                snap = snapshot_from_payloads(
-                    market,
-                    replay.book(slug),
-                    None,
-                    now=now,
-                    tick_size_fallback=config.paper.tick_size_fallback,
-                )
-                universe.append(snap)
+                slug = market.get("slug") or market.get("ticker")
+                universe.append(client.snapshot(market, client.book(slug), now=now))
         else:
             refreshed: list[MarketSnapshot] = []
             for snap in chosen:
                 try:
                     book = client.book(snap.slug)
-                    refreshed.append(
-                        snapshot_from_payloads(
-                            snap.raw.get("market") or {"slug": snap.slug, "question": snap.question,
-                                                       "endDate": snap.end_date.isoformat() if snap.end_date else None,
-                                                       "category": snap.category, "status": snap.status,
-                                                       "orderPriceMinTickSize": snap.tick_size,
-                                                       "feeCoefficient": snap.fee_coefficient},
-                            book,
-                            None,
-                            now=datetime.now(timezone.utc),
-                            tick_size_fallback=config.paper.tick_size_fallback,
-                        )
-                    )
+                    market = snap.raw.get("market") or {"slug": snap.slug, "question": snap.question}
+                    refreshed.append(client.snapshot(market, book, now=datetime.now(timezone.utc)))
                 except Exception as exc:
                     logger.log("book_error", market=snap.slug, error=str(exc), live=False)
                     refreshed.append(snap)
@@ -211,8 +192,8 @@ def run_paper(
                     )
 
         prev = snaps
-        if replay is not None:
-            replay.advance()
+        if is_replay:
+            client.advance()
         elif sleep and tick < n_ticks - 1:
             time.sleep(config.paper.poll_interval_seconds)
 
@@ -223,6 +204,7 @@ def run_paper(
     near_port.record_equity(mids)
     state = {
         "source": client.source_name,
+        "venue": getattr(client, "venue", None),
         "dry_run": True,
         "live": False,
         "ticks": n_ticks,

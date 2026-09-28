@@ -99,13 +99,33 @@ class LoggingConfig:
 
 
 @dataclass(frozen=True)
+class KalshiConfig:
+    market_data_base_url: str
+    demo_base_url: str
+    demo_orders_enabled: bool
+    min_request_interval_seconds: float
+    tick_size: Decimal
+
+
+@dataclass(frozen=True)
+class CompareConfig:
+    max_markets_each: int
+    min_title_score: float
+    min_net_edge: Decimal
+    contract_size: Decimal
+
+
+@dataclass(frozen=True)
 class AppConfig:
     dry_run: bool
     live_trading_enabled: bool
+    exchange: str
     api: ApiConfig
+    kalshi: KalshiConfig
     scanner: ScannerConfig
     paper: PaperConfig
     logging: LoggingConfig
+    compare: CompareConfig
     path: Path
     extra: dict[str, Any] = field(default_factory=dict)
 
@@ -130,16 +150,30 @@ def load_config(path: str | Path | None = None) -> AppConfig:
     risk_raw = paper_raw.get("risk") or {}
     fills_raw = paper_raw.get("fills") or {}
     log_raw = raw.get("logging") or {}
+    kalshi_raw = raw.get("kalshi") or {}
+    compare_raw = raw.get("compare") or {}
 
     config = AppConfig(
         dry_run=bool(raw.get("dry_run", True)),
         live_trading_enabled=bool(raw.get("live_trading_enabled", False)),
+        exchange=str(raw.get("exchange", "kalshi")),
         api=ApiConfig(
             gateway_base_url=str(api_raw.get("gateway_base_url", "https://gateway.polymarket.us")),
             api_base_url=str(api_raw.get("api_base_url", "https://api.polymarket.us")),
             request_timeout_seconds=float(api_raw.get("request_timeout_seconds", 30)),
             max_retries=int(api_raw.get("max_retries", 2)),
-            min_request_interval_seconds=float(api_raw.get("min_request_interval_seconds", 0.08)),
+            min_request_interval_seconds=float(api_raw.get("min_request_interval_seconds", 0.12)),
+        ),
+        kalshi=KalshiConfig(
+            market_data_base_url=str(
+                kalshi_raw.get("market_data_base_url", "https://external-api.kalshi.com/trade-api/v2")
+            ),
+            demo_base_url=str(
+                kalshi_raw.get("demo_base_url", "https://external-api.demo.kalshi.co/trade-api/v2")
+            ),
+            demo_orders_enabled=bool(kalshi_raw.get("demo_orders_enabled", False)),
+            min_request_interval_seconds=float(kalshi_raw.get("min_request_interval_seconds", 0.08)),
+            tick_size=_dec(kalshi_raw.get("tick_size"), "0.01"),
         ),
         scanner=ScannerConfig(
             active_only=bool(scan_raw.get("active_only", True)),
@@ -190,12 +224,21 @@ def load_config(path: str | Path | None = None) -> AppConfig:
             report_path=Path(log_raw.get("report_path", "logs/paper_report.txt")),
             state_path=Path(log_raw.get("state_path", "logs/paper_state.json")),
         ),
+        compare=CompareConfig(
+            max_markets_each=int(compare_raw.get("max_markets_each", 40)),
+            min_title_score=float(compare_raw.get("min_title_score", 0.34)),
+            min_net_edge=_dec(compare_raw.get("min_net_edge"), "0.01"),
+            contract_size=_dec(compare_raw.get("contract_size"), "100"),
+        ),
         path=cfg_path,
         extra=raw,
     )
     assert_paper_only(
         dry_run=config.dry_run,
         live_trading_enabled=config.live_trading_enabled,
-        env_live=os.environ.get("POLYMARKET_LIVE_TRADING"),
+        env_flags=[
+            os.environ.get("POLYMARKET_LIVE_TRADING"),
+            os.environ.get("KALSHI_LIVE_TRADING"),
+        ],
     )
     return config

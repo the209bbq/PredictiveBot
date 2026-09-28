@@ -21,21 +21,21 @@ def test_live_stub_raises():
 
 def test_assert_paper_only_raises_when_flag_on():
     try:
-        assert_paper_only(dry_run=True, live_trading_enabled=True, env_live=None)
+        assert_paper_only(dry_run=True, live_trading_enabled=True, env_flags=[None])
         raise AssertionError("should have raised")
     except LiveTradingDisabled:
         pass
     try:
-        assert_paper_only(dry_run=False, live_trading_enabled=False, env_live=None)
+        assert_paper_only(dry_run=False, live_trading_enabled=False, env_flags=[None])
         raise AssertionError("should have raised")
     except LiveTradingDisabled:
         pass
     try:
-        assert_paper_only(dry_run=True, live_trading_enabled=False, env_live="true")
+        assert_paper_only(dry_run=True, live_trading_enabled=False, env_flags=["true"])
         raise AssertionError("should have raised")
     except LiveTradingDisabled:
         pass
-    assert_paper_only(dry_run=True, live_trading_enabled=False, env_live="false")
+    assert_paper_only(dry_run=True, live_trading_enabled=False, env_flags=["false"])
 
 
 def test_maker_fill_applies_rebate_and_inventory():

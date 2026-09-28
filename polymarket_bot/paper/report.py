@@ -19,7 +19,7 @@ def format_strategy(block: dict[str, Any]) -> str:
     lines = [
         f"  Net P&L (mark-to-market, net of maker rebates): {_money(block.get('net_pnl'))}",
         f"  Realized P&L: {_money(block.get('realized_pnl'))}",
-        f"  Maker rebates: {_money(block.get('rebates'))}",
+        f"  Maker fees/rebates (signed): {_money(block.get('rebates'))}",
         f"  Fills: {block.get('fill_count', 0)}",
         f"  Max drawdown: {_money(block.get('max_drawdown'))}",
         f"  Ending equity: {_money(block.get('equity'))}   cash {_money(block.get('cash'))}",
@@ -48,10 +48,11 @@ def format_report(state: dict[str, Any]) -> str:
     dd_m = Decimal(str(maker.get("max_drawdown") or 0))
     dd_n = Decimal(str(near.get("max_drawdown") or 0))
     lines = [
-        "Polymarket US paper-trading report",
-        "DRY-RUN ONLY — no live orders, cancels, or fund movements",
+        "Paper-trading report",
+        "DRY-RUN ONLY — no production orders, cancels, or fund movements",
         "",
         f"Data source: {state.get('source')}",
+        f"Venue: {state.get('venue') or 'n/a'}",
         f"Ticks: {state.get('ticks')}    Markets: {', '.join(state.get('markets') or []) or '(none)'}",
         "",
         "Maker-only quotes around mid",
@@ -65,7 +66,7 @@ def format_report(state: dict[str, Any]) -> str:
         f"  Combined fills: {combined_fills}",
         f"  Worse max drawdown of the two books: {_money(max(dd_m, dd_n))}",
         "",
-        "Fills are simulated conservatively (trade-through or book-cross only)",
-        "and credit the Sep 25 2026 maker rebate of 0.0125 × C × p × (1−p).",
+        "Fills are simulated conservatively (trade-through or book-cross only).",
+        "Kalshi maker cash is usually $0 (or a maker fee); Polymarket US credits a rebate.",
     ]
     return "\n".join(lines) + "\n"

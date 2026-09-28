@@ -9,15 +9,19 @@ from typing import Any
 
 class FixtureClient:
     source_name = "recorded fixtures"
+    venue = "polymarket_us"
 
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
         payload = json.loads(self.path.read_text())
+        self.venue = str(payload.get("venue") or "polymarket_us")
         self._items = payload.get("items") or payload.get("markets") or []
         self._by_slug: dict[str, dict[str, Any]] = {}
+        self._schedule = payload.get("schedule")
         for item in self._items:
             market = item.get("market") or item
-            slug = market["slug"]
+            slug = market.get("slug") or market.get("ticker")
+            market["slug"] = slug
             self._by_slug[slug] = item
 
     def list_markets(
@@ -69,3 +73,19 @@ class FixtureClient:
 
     def close(self) -> None:
         return None
+
+    def trading_hours(self):
+        return self._schedule
+
+    def snapshot(self, market, book=None, *, now=None):
+        if self.venue == "kalshi" or "orderbook_fp" in (book or {}) or market.get("ticker"):
+            from polymarket_bot.exchanges.kalshi import snapshot_from_kalshi
+
+            return snapshot_from_kalshi(market, book, now=now)
+        from polymarket_bot.market_data.normalize import snapshot_from_payloads
+
+        snap = snapshot_from_payloads(market, book, None, now=now)
+        snap.venue = "polymarket_us"
+        snap.event_title = snap.question
+        snap.fee_type = "polymarket"
+        return snap

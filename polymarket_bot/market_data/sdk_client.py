@@ -24,6 +24,7 @@ class SdkPublicClient:
     """Read-only wrapper. Trading resources on the SDK are replaced with stubs."""
 
     source_name = "polymarket-us SDK (gateway.polymarket.us, unauthenticated)"
+    venue = "polymarket_us"
 
     def __init__(self, config: AppConfig) -> None:
         self._interval = config.api.min_request_interval_seconds
@@ -72,6 +73,18 @@ class SdkPublicClient:
     def bbo(self, slug: str) -> dict[str, Any]:
         self._pace()
         return dict(self._sdk.markets.bbo(slug))
+
+    def snapshot(self, market, book=None, *, now=None):
+        from polymarket_bot.market_data.normalize import snapshot_from_payloads
+
+        snap = snapshot_from_payloads(market, book, None, now=now)
+        snap.venue = "polymarket_us"
+        snap.event_title = snap.question
+        snap.fee_type = "polymarket"
+        return snap
+
+    def trading_hours(self):
+        return None
 
     def close(self) -> None:
         self._sdk.close()

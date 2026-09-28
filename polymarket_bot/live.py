@@ -1,4 +1,4 @@
-"""Live-trading stub. This version always raises."""
+"""Live-trading stub. Production always raises."""
 
 from __future__ import annotations
 

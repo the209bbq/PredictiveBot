@@ -72,6 +72,10 @@ class MarketSnapshot:
     bids: list[BookLevel] = field(default_factory=list)
     asks: list[BookLevel] = field(default_factory=list)
     raw: dict[str, Any] = field(default_factory=dict)
+    venue: str = "polymarket_us"
+    event_title: str | None = None
+    fee_type: str | None = None
+    fee_multiplier: Decimal = Decimal("1")
 
     @property
     def liquid(self) -> bool:
@@ -85,6 +89,7 @@ class MarketSnapshot:
 
 class MarketDataClient(Protocol):
     source_name: str
+    venue: str
 
     def list_markets(
         self,
@@ -99,7 +104,16 @@ class MarketDataClient(Protocol):
     def book(self, slug: str) -> dict[str, Any]:
         ...
 
-    def bbo(self, slug: str) -> dict[str, Any]:
+    def snapshot(
+        self,
+        market: dict[str, Any],
+        book: dict[str, Any] | None = None,
+        *,
+        now: datetime | None = None,
+    ) -> MarketSnapshot:
+        ...
+
+    def trading_hours(self) -> dict[str, Any] | None:
         ...
 
     def close(self) -> None:

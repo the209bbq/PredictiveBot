@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
 
-from polymarket_bot.fees import maker_rebate
+from polymarket_bot.fees import maker_cashflow
 
 ZERO = Decimal("0")
 
@@ -19,6 +19,9 @@ class PaperOrder:
     price: Decimal
     qty: Decimal
     strategy: str
+    venue: str = "polymarket_us"
+    fee_type: str | None = None
+    fee_multiplier: Decimal = Decimal("1")
 
 
 @dataclass
@@ -119,7 +122,13 @@ class Portfolio:
         return eq
 
     def apply_fill(self, order: PaperOrder, qty: Decimal, reason: str) -> Fill:
-        rebate = maker_rebate(qty, order.price)
+        rebate = maker_cashflow(
+            qty,
+            order.price,
+            venue=order.venue,
+            fee_type=order.fee_type,
+            multiplier=order.fee_multiplier,
+        )
         pos = self.position(order.market)
         if order.side == "buy":
             self.cash -= order.price * qty

@@ -11,10 +11,12 @@ from typing import Any
 
 class ReplayClient:
     source_name = "fixture replay"
+    venue = "polymarket_us"
 
     def __init__(self, path: str | Path, now: datetime | None = None) -> None:
         self.path = Path(path)
         payload = json.loads(self.path.read_text())
+        self.venue = str(payload.get("venue") or "polymarket_us")
         self._ticks: list[dict[str, Any]] = payload["ticks"]
         self._cursor = 0
         self._now = now or datetime.now(timezone.utc)
@@ -31,9 +33,12 @@ class ReplayClient:
         market = dict(item.get("market") or item)
         hours = market.get("hoursFromNow")
         if hours is not None:
-            market["endDate"] = (self._now + timedelta(hours=float(hours))).isoformat()
+            iso = (self._now + timedelta(hours=float(hours))).isoformat()
+            market["endDate"] = iso
+            market["close_time"] = iso
             market["active"] = True
             market["closed"] = False
+            market["status"] = "active"
         item = dict(item)
         item["market"] = market
         return item
@@ -53,7 +58,25 @@ class ReplayClient:
         return self._by_slug[slug]["book"]
 
     def bbo(self, slug: str) -> dict[str, Any]:
-        return self._by_slug[slug]["bbo"]
+        item = self._by_slug[slug]
+        return item.get("bbo") or {}
+
+    def snapshot(self, market, book=None, *, now=None):
+        now = now or self._now
+        if self.venue == "kalshi" or "orderbook_fp" in (book or {}):
+            from polymarket_bot.exchanges.kalshi import snapshot_from_kalshi
+
+            return snapshot_from_kalshi(market, book, now=now)
+        from polymarket_bot.market_data.normalize import snapshot_from_payloads
+
+        snap = snapshot_from_payloads(market, book, None, now=now)
+        snap.venue = "polymarket_us"
+        snap.event_title = snap.question
+        snap.fee_type = "polymarket"
+        return snap
+
+    def trading_hours(self):
+        return None
 
     def advance(self) -> bool:
         nxt = self._cursor + 1

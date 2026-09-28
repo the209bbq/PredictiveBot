@@ -10,6 +10,18 @@ from polymarket_bot.market_data import MarketDataClient, MarketSnapshot
 from polymarket_bot.market_data.normalize import snapshot_from_payloads
 
 
+def _snapshot(client: MarketDataClient, market: dict, book, now, config: AppConfig) -> MarketSnapshot:
+    if hasattr(client, "snapshot"):
+        return client.snapshot(market, book, now=now)
+    return snapshot_from_payloads(
+        market,
+        book,
+        None,
+        now=now,
+        tick_size_fallback=config.paper.tick_size_fallback,
+    )
+
+
 def is_liquid(snap: MarketSnapshot, cfg: ScannerConfig) -> bool:
     if snap.best_bid is None or snap.best_ask is None or snap.spread is None:
         return False
@@ -25,8 +37,8 @@ def is_liquid(snap: MarketSnapshot, cfg: ScannerConfig) -> bool:
     hours = snap.hours_to_resolution
     if hours is None or hours < cfg.min_hours_to_resolution:
         return False
-    status = (snap.status or "").upper()
-    if status and "OPEN" not in status:
+    status = (snap.status or "").lower()
+    if status and not any(tok in status for tok in ("open", "active")):
         return False
     return True
 
@@ -48,11 +60,7 @@ def scan_markets(
 
     ranked: list[tuple[Decimal, dict]] = []
     for market in listed:
-        snap = snapshot_from_payloads(
-            market,
-            now=now,
-            tick_size_fallback=config.paper.tick_size_fallback,
-        )
+        snap = _snapshot(client, market, None, now, config)
         if snap.best_bid is None or snap.best_ask is None or snap.spread is None:
             continue
         if snap.spread > cfg.max_spread:
@@ -65,18 +73,12 @@ def scan_markets(
     ranked.sort(key=lambda row: row[0])
     snapshots: list[MarketSnapshot] = []
     for _, market in ranked[: cfg.max_book_fetches]:
-        slug = market["slug"]
+        slug = market.get("slug") or market.get("ticker")
         try:
             book = client.book(slug)
         except Exception:
             continue
-        snap = snapshot_from_payloads(
-            market,
-            book,
-            None,
-            now=now,
-            tick_size_fallback=config.paper.tick_size_fallback,
-        )
+        snap = _snapshot(client, market, book, now, config)
         snapshots.append(snap)
 
     liquid = [s for s in snapshots if is_liquid(s, cfg)]
@@ -88,7 +90,7 @@ def format_scan_table(rows: list[MarketSnapshot]) -> str:
     if not rows:
         return "No liquid markets matched the scanner filters."
     header = (
-        f"{'slug':<42} {'mid':>7} {'sprd':>7} {'bidQty':>10} {'askQty':>10} "
+        f"{'venue':<14} {'slug':<42} {'mid':>7} {'sprd':>7} {'bidQty':>10} {'askQty':>10} "
         f"{'vol':>10} {'hrs':>8} question"
     )
     lines = [header, "-" * len(header)]
@@ -99,7 +101,7 @@ def format_scan_table(rows: list[MarketSnapshot]) -> str:
         vol = f"{s.volume_shares:.0f}" if s.volume_shares is not None else "-"
         q = (s.question or "")[:48]
         lines.append(
-            f"{s.slug:<42} {mid:>7} {sprd:>7} {s.bid_depth_contracts:>10.0f} "
+            f"{s.venue:<14} {s.slug:<42} {mid:>7} {sprd:>7} {s.bid_depth_contracts:>10.0f} "
             f"{s.ask_depth_contracts:>10.0f} {vol:>10} {hrs:>8} {q}"
         )
     return "\n".join(lines)

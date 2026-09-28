@@ -1,0 +1,460 @@
+{
+  "captured_at": "2026-09-28T22:34:15.151475+00:00",
+  "venue": "kalshi",
+  "schedule": {
+    "schedule": {
+      "maintenance_windows": [],
+      "standard_hours": [
+        {
+          "end_time": "2200-12-01T00:00:00Z",
+          "friday": [
+            {
+              "close_time": "00:00",
+              "open_time": "00:00"
+            }
+          ],
+          "monday": [
+            {
+              "close_time": "00:00",
+              "open_time": "00:00"
+            }
+          ],
+          "saturday": [
+            {
+              "close_time": "00:00",
+              "open_time": "00:00"
+            }
+          ],
+          "start_time": "2024-12-01T00:00:00Z",
+          "sunday": [
+            {
+              "close_time": "00:00",
+              "open_time": "00:00"
+            }
+          ],
+          "thursday": [
+            {
+              "close_time": "03:00",
+              "open_time": "00:00"
+            },
+            {
+              "close_time": "00:00",
+              "open_time": "05:00"
+            }
+          ],
+          "tuesday": [
+            {
+              "close_time": "00:00",
+              "open_time": "00:00"
+            }
+          ],
+          "wednesday": [
+            {
+              "close_time": "00:00",
+              "open_time": "00:00"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "items": [
+    {
+      "market": {
+        "can_close_early": true,
+        "close_time": "2026-10-05T16:00:00Z",
+        "created_time": "2026-09-28T22:26:14.064172Z",
+        "early_close_condition": "This market will close and expire after the event occurs.",
+        "event_ticker": "KXNCAAFOT-26OCT03NDUNC",
+        "exchange_index": 0,
+        "expected_expiration_time": "2026-10-03T19:00:00Z",
+        "expiration_time": "2026-10-05T16:00:00Z",
+        "expiration_value": "",
+        "floor_strike": 1,
+        "last_price_dollars": "0.0000",
+        "latest_expiration_time": "2026-10-05T16:00:00Z",
+        "liquidity_dollars": "0.0000",
+        "market_type": "binary",
+        "no_ask_dollars": "0.9500",
+        "no_bid_dollars": "0.9100",
+        "no_sub_title": "Game goes to overtime",
+        "notional_value_dollars": "1.0000",
+        "occurrence_datetime": "2026-10-03T19:00:00Z",
+        "open_interest_fp": "0.00",
+        "open_time": "2026-09-28T22:30:00Z",
+        "previous_price_dollars": "0.0000",
+        "previous_yes_ask_dollars": "0.0000",
+        "previous_yes_bid_dollars": "0.0000",
+        "price_level_structure": "linear_cent",
+        "price_ranges": [
+          {
+            "end": "1.0000",
+            "start": "0.0000",
+            "step": "0.0100"
+          }
+        ],
+        "result": "",
+        "rules_primary": "If at least 1 overtime period is played in the Notre Dame vs North Carolina college football game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+        "rules_secondary": "An overtime period is any period of play after regulation ends. From the 3rd overtime onward, the alternating two-point conversion series counts as an overtime period. An overtime period counts as played once it commences, via a legal snap (in the first two overtimes) or a first two-point attempt (in the third overtime and onward). Overtime periods that are scheduled but never start do not count. Once started, an overtime period counts in full, regardless of its duration or whether both teams get a possession or attempt.\n\nIf the game is postponed but begins within 48 hours of its originally scheduled start time, the market will remain open and resolve based on the official final result. If the game is not started within 48 hours, the market will resolve to a fair price.\n\nKalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the NCAA. All trademarks, logos, and brand names are the property of their respective owners.",
+        "settlement_timer_seconds": 300,
+        "status": "active",
+        "strike_type": "greater_or_equal",
+        "ticker": "KXNCAAFOT-26OCT03NDUNC-1",
+        "title": "Game goes to overtime",
+        "updated_time": "2026-09-28T22:30:00.995467Z",
+        "volume_24h_fp": "0.00",
+        "volume_fp": "0.00",
+        "yes_ask_dollars": "0.0900",
+        "yes_ask_size_fp": "25.00",
+        "yes_bid_dollars": "0.0500",
+        "yes_bid_size_fp": "37.00",
+        "yes_sub_title": "Game goes to overtime",
+        "slug": "KXNCAAFOT-26OCT03NDUNC-1",
+        "event_title": "Notre Dame vs North Carolina: Overtime",
+        "category": "Sports",
+        "fee_type": "quadratic",
+        "fee_multiplier": 1
+      },
+      "book": {
+        "orderbook_fp": {
+          "no_dollars": [
+            [
+              "0.5600",
+              "250.00"
+            ],
+            [
+              "0.5700",
+              "500.00"
+            ],
+            [
+              "0.7100",
+              "250.00"
+            ],
+            [
+              "0.7200",
+              "200.00"
+            ],
+            [
+              "0.8500",
+              "25.00"
+            ],
+            [
+              "0.8700",
+              "25.00"
+            ],
+            [
+              "0.8900",
+              "25.00"
+            ],
+            [
+              "0.9100",
+              "25.00"
+            ]
+          ],
+          "yes_dollars": [
+            [
+              "0.0100",
+              "233.00"
+            ],
+            [
+              "0.0300",
+              "41.00"
+            ],
+            [
+              "0.0500",
+              "37.00"
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "market": {
+        "can_close_early": true,
+        "close_time": "2026-09-29T21:00:00Z",
+        "created_time": "2026-09-28T22:22:28.262422Z",
+        "custom_strike": {
+          "front_month_contract": "N/A",
+          "strike_date": "2026-09-29T21:00:00.000Z"
+        },
+        "event_ticker": "KXNATGASD-26SEP2917",
+        "exchange_index": 2,
+        "expected_expiration_time": "2026-09-29T21:00:00Z",
+        "expiration_time": "2026-10-06T22:00:00Z",
+        "expiration_value": "",
+        "floor_strike": 3.195,
+        "last_price_dollars": "0.0000",
+        "latest_expiration_time": "2026-10-06T22:00:00Z",
+        "liquidity_dollars": "0.0000",
+        "market_type": "binary",
+        "no_ask_dollars": "0.7600",
+        "no_bid_dollars": "0.7300",
+        "no_sub_title": "Above $3.195",
+        "notional_value_dollars": "1.0000",
+        "occurrence_datetime": "2026-09-29T21:00:00Z",
+        "open_interest_fp": "0.00",
+        "open_time": "2026-09-28T22:30:00Z",
+        "previous_price_dollars": "0.0000",
+        "previous_yes_ask_dollars": "0.0000",
+        "previous_yes_bid_dollars": "0.0000",
+        "price_level_structure": "linear_cent",
+        "price_ranges": [
+          {
+            "end": "1.0000",
+            "start": "0.0000",
+            "step": "0.0100"
+          }
+        ],
+        "result": "",
+        "rules_primary": "If the close price of the 1-minute candlestick for natural gas on September 29, 2026 at 5:00 PM EDT is above 3.195 USD/MMBtu, then the market resolves to Yes.",
+        "rules_secondary": "The settlement value is rounded to the nearest 3 decimal places. When confirming the settlement value, note the close price for the 1-minute candlestick at a given time is the price at the end of the immediately preceding one-minute interval. For example, the candlestick timestamped 4:59 PM reflects trading during 4:59:00 PM to 4:59:59 PM and closes at 5:00:00 PM. If no data is published by the specified source agency for the specified time, then the most recently available published data will be used to resolve the market.",
+        "settlement_timer_seconds": 3600,
+        "status": "active",
+        "strike_type": "greater",
+        "ticker": "KXNATGASD-26SEP2917-T3.195",
+        "title": "Will the natural gas close price be above 3.195 USD/MMBtu on September 29, 2026 at 5:00 PM EDT?",
+        "updated_time": "2026-09-28T22:30:00.995467Z",
+        "volume_24h_fp": "0.00",
+        "volume_fp": "0.00",
+        "yes_ask_dollars": "0.2700",
+        "yes_ask_size_fp": "500.00",
+        "yes_bid_dollars": "0.2400",
+        "yes_bid_size_fp": "50.00",
+        "yes_sub_title": "Above $3.195",
+        "slug": "KXNATGASD-26SEP2917-T3.195",
+        "event_title": "Natural gas price on September 29, 2026 at 5:00 PM EDT?",
+        "category": "Commodities",
+        "fee_type": "quadratic",
+        "fee_multiplier": 1
+      },
+      "book": {
+        "orderbook_fp": {
+          "no_dollars": [
+            [
+              "0.0100",
+              "428.00"
+            ],
+            [
+              "0.1800",
+              "15.00"
+            ],
+            [
+              "0.6600",
+              "50.00"
+            ],
+            [
+              "0.7300",
+              "500.00"
+            ]
+          ],
+          "yes_dollars": [
+            [
+              "0.2300",
+              "500.00"
+            ],
+            [
+              "0.2400",
+              "50.00"
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "market": {
+        "can_close_early": true,
+        "close_time": "2026-09-29T21:00:00Z",
+        "created_time": "2026-09-28T22:22:18.000159Z",
+        "custom_strike": {
+          "front_month_contract": "N/A",
+          "strike_date": "2026-09-29T21:00:00.000Z"
+        },
+        "event_ticker": "KXNATGASD-26SEP2917",
+        "exchange_index": 2,
+        "expected_expiration_time": "2026-09-29T21:00:00Z",
+        "expiration_time": "2026-10-06T22:00:00Z",
+        "expiration_value": "",
+        "floor_strike": 3.19,
+        "last_price_dollars": "0.0000",
+        "latest_expiration_time": "2026-10-06T22:00:00Z",
+        "liquidity_dollars": "0.0000",
+        "market_type": "binary",
+        "no_ask_dollars": "0.7500",
+        "no_bid_dollars": "0.7200",
+        "no_sub_title": "Above $3.190",
+        "notional_value_dollars": "1.0000",
+        "occurrence_datetime": "2026-09-29T21:00:00Z",
+        "open_interest_fp": "0.00",
+        "open_time": "2026-09-28T22:30:00Z",
+        "previous_price_dollars": "0.0000",
+        "previous_yes_ask_dollars": "0.0000",
+        "previous_yes_bid_dollars": "0.0000",
+        "price_level_structure": "linear_cent",
+        "price_ranges": [
+          {
+            "end": "1.0000",
+            "start": "0.0000",
+            "step": "0.0100"
+          }
+        ],
+        "result": "",
+        "rules_primary": "If the close price of the 1-minute candlestick for natural gas on September 29, 2026 at 5:00 PM EDT is above 3.190 USD/MMBtu, then the market resolves to Yes.",
+        "rules_secondary": "The settlement value is rounded to the nearest 3 decimal places. When confirming the settlement value, note the close price for the 1-minute candlestick at a given time is the price at the end of the immediately preceding one-minute interval. For example, the candlestick timestamped 4:59 PM reflects trading during 4:59:00 PM to 4:59:59 PM and closes at 5:00:00 PM. If no data is published by the specified source agency for the specified time, then the most recently available published data will be used to resolve the market.",
+        "settlement_timer_seconds": 3600,
+        "status": "active",
+        "strike_type": "greater",
+        "ticker": "KXNATGASD-26SEP2917-T3.190",
+        "title": "Will the natural gas close price be above 3.190 USD/MMBtu on September 29, 2026 at 5:00 PM EDT?",
+        "updated_time": "2026-09-28T22:30:00.995467Z",
+        "volume_24h_fp": "0.00",
+        "volume_fp": "0.00",
+        "yes_ask_dollars": "0.2800",
+        "yes_ask_size_fp": "500.00",
+        "yes_bid_dollars": "0.2500",
+        "yes_bid_size_fp": "85.00",
+        "yes_sub_title": "Above $3.190",
+        "slug": "KXNATGASD-26SEP2917-T3.190",
+        "event_title": "Natural gas price on September 29, 2026 at 5:00 PM EDT?",
+        "category": "Commodities",
+        "fee_type": "quadratic",
+        "fee_multiplier": 1
+      },
+      "book": {
+        "orderbook_fp": {
+          "no_dollars": [
+            [
+              "0.0100",
+              "428.00"
+            ],
+            [
+              "0.1700",
+              "16.00"
+            ],
+            [
+              "0.6300",
+              "75.00"
+            ],
+            [
+              "0.6400",
+              "50.00"
+            ],
+            [
+              "0.7200",
+              "500.00"
+            ]
+          ],
+          "yes_dollars": [
+            [
+              "0.2400",
+              "500.00"
+            ],
+            [
+              "0.2500",
+              "85.00"
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "market": {
+        "can_close_early": true,
+        "close_time": "2026-09-29T21:00:00Z",
+        "created_time": "2026-09-28T22:22:07.725221Z",
+        "custom_strike": {
+          "front_month_contract": "N/A",
+          "strike_date": "2026-09-29T21:00:00.000Z"
+        },
+        "event_ticker": "KXNATGASD-26SEP2917",
+        "exchange_index": 2,
+        "expected_expiration_time": "2026-09-29T21:00:00Z",
+        "expiration_time": "2026-10-06T22:00:00Z",
+        "expiration_value": "",
+        "floor_strike": 3.185,
+        "last_price_dollars": "0.0000",
+        "latest_expiration_time": "2026-10-06T22:00:00Z",
+        "liquidity_dollars": "0.0000",
+        "market_type": "binary",
+        "no_ask_dollars": "0.7300",
+        "no_bid_dollars": "0.7000",
+        "no_sub_title": "Above $3.185",
+        "notional_value_dollars": "1.0000",
+        "occurrence_datetime": "2026-09-29T21:00:00Z",
+        "open_interest_fp": "0.00",
+        "open_time": "2026-09-28T22:30:00Z",
+        "previous_price_dollars": "0.0000",
+        "previous_yes_ask_dollars": "0.0000",
+        "previous_yes_bid_dollars": "0.0000",
+        "price_level_structure": "linear_cent",
+        "price_ranges": [
+          {
+            "end": "1.0000",
+            "start": "0.0000",
+            "step": "0.0100"
+          }
+        ],
+        "result": "",
+        "rules_primary": "If the close price of the 1-minute candlestick for natural gas on September 29, 2026 at 5:00 PM EDT is above 3.185 USD/MMBtu, then the market resolves to Yes.",
+        "rules_secondary": "The settlement value is rounded to the nearest 3 decimal places. When confirming the settlement value, note the close price for the 1-minute candlestick at a given time is the price at the end of the immediately preceding one-minute interval. For example, the candlestick timestamped 4:59 PM reflects trading during 4:59:00 PM to 4:59:59 PM and closes at 5:00:00 PM. If no data is published by the specified source agency for the specified time, then the most recently available published data will be used to resolve the market.",
+        "settlement_timer_seconds": 3600,
+        "status": "active",
+        "strike_type": "greater",
+        "ticker": "KXNATGASD-26SEP2917-T3.185",
+        "title": "Will the natural gas close price be above 3.185 USD/MMBtu on September 29, 2026 at 5:00 PM EDT?",
+        "updated_time": "2026-09-28T22:30:00.995467Z",
+        "volume_24h_fp": "0.00",
+        "volume_fp": "0.00",
+        "yes_ask_dollars": "0.3000",
+        "yes_ask_size_fp": "506.00",
+        "yes_bid_dollars": "0.2700",
+        "yes_bid_size_fp": "50.00",
+        "yes_sub_title": "Above $3.185",
+        "slug": "KXNATGASD-26SEP2917-T3.185",
+        "event_title": "Natural gas price on September 29, 2026 at 5:00 PM EDT?",
+        "category": "Commodities",
+        "fee_type": "quadratic",
+        "fee_multiplier": 1
+      },
+      "book": {
+        "orderbook_fp": {
+          "no_dollars": [
+            [
+              "0.0100",
+              "214.00"
+            ],
+            [
+              "0.1600",
+              "8.00"
+            ],
+            [
+              "0.6200",
+              "50.00"
+            ],
+            [
+              "0.7000",
+              "506.00"
+            ]
+          ],
+          "yes_dollars": [
+            [
+              "0.0100",
+              "214.00"
+            ],
+            [
+              "0.0700",
+              "20.00"
+            ],
+            [
+              "0.2600",
+              "500.00"
+            ],
+            [
+              "0.2700",
+              "50.00"
+            ]
+          ]
+        }
+      }
+    }
+  ]
+}

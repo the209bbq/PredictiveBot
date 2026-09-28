@@ -48,5 +48,8 @@ def desired_quotes(
             price=price,
             qty=qty,
             strategy=STRATEGY,
+            venue=snap.venue,
+            fee_type=snap.fee_type,
+            fee_multiplier=snap.fee_multiplier,
         )
     ]
