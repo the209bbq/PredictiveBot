@@ -31,6 +31,7 @@ class FixtureClient:
         active: bool = True,
         closed: bool = False,
         offset: int = 0,
+        **_kwargs: Any,
     ) -> list[dict[str, Any]]:
         rows = []
         for item in self._items:

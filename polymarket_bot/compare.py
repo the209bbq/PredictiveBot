@@ -16,13 +16,73 @@ from polymarket_bot.scanner import _snapshot
 STOP = {
     "the", "a", "an", "of", "on", "in", "at", "for", "to", "will", "be", "by", "vs",
     "versus", "and", "or", "is", "over", "under", "more", "than", "game", "wins",
-    "win", "before", "after", "yes", "no", "market", "contract", "price",
+    "win", "before", "after", "yes", "no", "market", "contract", "price", "pro",
+    "tec", "26", "09", "27",
 }
+
+ALIASES = {
+    "mlb": {"baseball"},
+    "baseball": {"mlb"},
+    "champ": {"champion", "champions", "championship"},
+    "champion": {"champ", "champions", "championship"},
+    "champions": {"champ", "champion", "championship"},
+    "nlchamp": {"national", "league", "champion"},
+    "alchamp": {"american", "league", "champion"},
+    "atl": {"atlanta"},
+    "atlanta": {"atl"},
+    "phi": {"philadelphia"},
+    "philadelphia": {"phi"},
+    "sd": {"diego"},
+    "diego": {"sd"},
+    "chc": {"chicago", "cubs"},
+    "cws": {"chicago"},
+    "nyy": {"york"},
+    "lad": {"angeles"},
+    "angeles": {"lad"},
+    "bos": {"boston"},
+    "boston": {"bos"},
+    "hou": {"houston"},
+    "houston": {"hou"},
+    "mil": {"milwaukee"},
+    "milwaukee": {"mil"},
+}
+
+KALSHI_COMPARE_SERIES = ("KXMLB", "KXMLBNL", "KXMLBAL", "KXMLBSERIES")
+
+
+def team_code(slug: str) -> str:
+    parts = re.findall(r"[a-z0-9]+", (slug or "").lower())
+    return parts[-1] if parts else ""
+
+
+def event_kind(slug: str, title: str) -> str:
+    blob = f"{slug} {title}".lower()
+    if "kxmlbnl" in blob or "nlchamp" in blob or "national league" in blob:
+        return "nl"
+    if "kxmlbal" in blob or "alchamp" in blob or "american league" in blob:
+        return "al"
+    if "world series" in blob or "mlb-champ" in blob:
+        return "ws"
+    if re.match(r"kxmlb-\d+-", (slug or "").lower()):
+        return "ws"
+    return ""
+
+
+def same_team(left_slug: str, right_slug: str) -> bool | None:
+    a, b = team_code(left_slug), team_code(right_slug)
+    if not a or not b:
+        return None
+    if a == b:
+        return True
+    return b in ALIASES.get(a, set()) or a in ALIASES.get(b, set())
 
 
 def tokens(text: str) -> set[str]:
-    words = re.findall(r"[a-z0-9]+", (text or "").lower())
-    return {w for w in words if w not in STOP and len(w) > 1}
+    words = set(re.findall(r"[a-z0-9]+", (text or "").lower()))
+    expanded = set(words)
+    for word in words:
+        expanded |= ALIASES.get(word, set())
+    return {w for w in expanded if w not in STOP and len(w) > 1}
 
 
 def title_score(left: str, right: str) -> float:
@@ -55,12 +115,21 @@ def compare_snapshots(
     used: set[str] = set()
     for k in kalshi_rows:
         k_title = " ".join(filter(None, [k.event_title, k.question, k.slug]))
+        k_kind = event_kind(k.slug, k_title)
         best: tuple[float, MarketSnapshot] | None = None
         for p in pm_list:
             if p.slug in used:
                 continue
             p_title = " ".join(filter(None, [p.event_title, p.question, p.slug]))
+            p_kind = event_kind(p.slug, p_title)
+            if k_kind and p_kind and k_kind != p_kind:
+                continue
+            team_ok = same_team(k.slug, p.slug)
+            if team_ok is False:
+                continue
             score = title_score(k_title, p_title)
+            if team_ok:
+                score = max(score, config.compare.min_title_score) + 0.1
             if score < config.compare.min_title_score:
                 continue
             if best is None or score > best[0]:
@@ -96,7 +165,31 @@ def compare_snapshots(
 
 def collect_snapshots(client, config: AppConfig, *, now: datetime | None = None) -> list[MarketSnapshot]:
     now = now or datetime.now(timezone.utc)
-    listed = client.list_markets(limit=config.compare.max_markets_each, active=True, closed=False)
+    listed: list[dict] = []
+    seen: set[str] = set()
+
+    def _add(rows: list[dict]) -> None:
+        for market in rows:
+            key = str(market.get("ticker") or market.get("slug") or "")
+            if not key or key in seen:
+                continue
+            listed.append(market)
+            seen.add(key)
+
+    if getattr(client, "venue", "") == "kalshi":
+        for series in KALSHI_COMPARE_SERIES:
+            try:
+                _add(
+                    client.list_markets(
+                        limit=30,
+                        active=True,
+                        closed=False,
+                        series_ticker=series,
+                    )
+                )
+            except TypeError:
+                break
+    _add(client.list_markets(limit=config.compare.max_markets_each, active=True, closed=False))
     rows: list[MarketSnapshot] = []
     for market in listed[: config.compare.max_markets_each]:
         slug = market.get("slug") or market.get("ticker")

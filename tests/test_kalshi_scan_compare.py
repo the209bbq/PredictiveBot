@@ -22,12 +22,17 @@ def test_kalshi_fixture_scanner():
 def test_title_score_and_compare_synthetic():
     cfg = load_config()
     assert title_score("Philadelphia Eagles vs Chicago Bears", "Philadelphia vs Chicago") > 0.3
+    ws = title_score(
+        "World Series Champion tec-mlb-champ-2026-09-27-atl",
+        "Will Atlanta win the 2026 Pro Baseball Championship KXMLB-26-ATL",
+    )
+    assert ws > 0.34
     now = datetime(2026, 9, 28, tzinfo=timezone.utc)
     k = snapshot_from_kalshi(
         {
-            "ticker": "KXTEST-PHI",
-            "title": "Philadelphia Eagles vs Chicago Bears",
-            "event_title": "Philadelphia Eagles vs Chicago Bears",
+            "ticker": "KXMLB-26-ATL",
+            "title": "Will Atlanta win the 2026 Pro Baseball Championship?",
+            "event_title": "Will Atlanta win the 2026 Pro Baseball Championship?",
             "yes_bid_dollars": "0.40",
             "yes_ask_dollars": "0.42",
             "status": "active",
@@ -45,9 +50,9 @@ def test_title_score_and_compare_synthetic():
     )
     p = snapshot_from_kalshi(
         {
-            "ticker": "phi-chi",
-            "title": "Philadelphia Eagles vs Chicago Bears",
-            "event_title": "Philadelphia Eagles vs Chicago Bears",
+            "ticker": "tec-mlb-champ-2026-09-27-atl",
+            "title": "World Series Champion",
+            "event_title": "World Series Champion",
             "yes_bid_dollars": "0.50",
             "yes_ask_dollars": "0.52",
             "status": "active",

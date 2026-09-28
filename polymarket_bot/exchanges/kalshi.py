@@ -159,10 +159,13 @@ class KalshiClient:
         active: bool = True,
         closed: bool = False,
         offset: int = 0,
+        series_ticker: str | None = None,
     ) -> list[dict[str, Any]]:
         params: dict[str, Any] = {"limit": min(limit, 1000), "mve_filter": "exclude"}
         if active and not closed:
             params["status"] = "open"
+        if series_ticker:
+            params["series_ticker"] = series_ticker
         payload = self._get(self.data_base_url, "/markets", params)
         rows = []
         for market in payload.get("markets") or []:
