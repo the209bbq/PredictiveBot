@@ -1,0 +1,60 @@
+# Conservative defaults for a dry-run Polymarket US paper bot.
+# This file is the single source of strategy, risk, and scan parameters.
+
+dry_run: true
+# If true, the process raises immediately. Live order placement is not implemented.
+live_trading_enabled: false
+
+api:
+  gateway_base_url: https://gateway.polymarket.us
+  api_base_url: https://api.polymarket.us
+  request_timeout_seconds: 30
+  max_retries: 2
+  # Public unauthenticated limit is 20 rps/IP. Stay well below it.
+  min_request_interval_seconds: 0.08
+
+scanner:
+  active_only: true
+  include_closed: false
+  max_markets_to_list: 40
+  max_book_fetches: 20
+  min_volume_shares: 1000
+  min_bid_depth_contracts: 25
+  min_ask_depth_contracts: 25
+  max_spread: 0.04
+  min_hours_to_resolution: 2
+  top_n: 12
+
+paper:
+  starting_cash: 1000.00
+  quote_size_contracts: 10
+  max_markets: 5
+  ticks: 6
+  poll_interval_seconds: 2.0
+  tick_size_fallback: 0.001
+  maker:
+    enabled: true
+    half_spread: 0.02
+    inventory_skew_per_contract: 0.0004
+  near_resolution:
+    enabled: true
+    min_price: 0.94
+    max_price: 0.98
+    max_hours_to_resolution: 36
+    min_hours_to_resolution: 0.5
+    quote_size_contracts: 5
+  risk:
+    max_position_per_market: 40
+    max_gross_position: 120
+    max_daily_loss: 25.00
+    cancel_on_price_jump: 0.08
+    maker_min_hours_to_resolution: 6
+  fills:
+    # Resting quotes fill only on a new trade-through or a book cross-through.
+    require_strict_trade_through: true
+
+logging:
+  level: INFO
+  jsonl_path: logs/decisions.jsonl
+  report_path: logs/paper_report.txt
+  state_path: logs/paper_state.json

@@ -1,0 +1,1183 @@
+{
+  "captured_at": "2026-09-28T22:25:13.950801+00:00",
+  "items": [
+    {
+      "market": {
+        "id": "7900",
+        "slug": "tec-mlb-nlchamp-2026-09-27-atl",
+        "question": "National League Champion",
+        "title": "Atlanta Braves",
+        "category": "sports",
+        "status": "MARKET_STATUS_OPEN",
+        "active": true,
+        "closed": false,
+        "endDate": "2026-11-06T21:20:09Z",
+        "startDate": "2026-03-19T14:32:23Z",
+        "orderPriceMinTickSize": 0.001,
+        "feeCoefficient": 0.0695,
+        "bestBidQuote": {
+          "value": "0.1250",
+          "currency": "USD"
+        },
+        "bestAskQuote": {
+          "value": "0.1340",
+          "currency": "USD"
+        },
+        "minimumTradeQty": 1
+      },
+      "book": {
+        "marketData": {
+          "marketSlug": "tec-mlb-nlchamp-2026-09-27-atl",
+          "bids": [
+            {
+              "px": {
+                "value": "0.1250",
+                "currency": "USD"
+              },
+              "qty": "3.0000"
+            },
+            {
+              "px": {
+                "value": "0.1200",
+                "currency": "USD"
+              },
+              "qty": "1.0000"
+            },
+            {
+              "px": {
+                "value": "0.1070",
+                "currency": "USD"
+              },
+              "qty": "10.0000"
+            },
+            {
+              "px": {
+                "value": "0.1060",
+                "currency": "USD"
+              },
+              "qty": "8.0000"
+            },
+            {
+              "px": {
+                "value": "0.1050",
+                "currency": "USD"
+              },
+              "qty": "2502.0000"
+            },
+            {
+              "px": {
+                "value": "0.1030",
+                "currency": "USD"
+              },
+              "qty": "1054.0000"
+            },
+            {
+              "px": {
+                "value": "0.0300",
+                "currency": "USD"
+              },
+              "qty": "156.0000"
+            },
+            {
+              "px": {
+                "value": "0.0210",
+                "currency": "USD"
+              },
+              "qty": "9976.0000"
+            },
+            {
+              "px": {
+                "value": "0.0010",
+                "currency": "USD"
+              },
+              "qty": "250000.0000"
+            }
+          ],
+          "offers": [
+            {
+              "px": {
+                "value": "0.1340",
+                "currency": "USD"
+              },
+              "qty": "8.0000"
+            },
+            {
+              "px": {
+                "value": "0.1350",
+                "currency": "USD"
+              },
+              "qty": "1.0000"
+            },
+            {
+              "px": {
+                "value": "0.1900",
+                "currency": "USD"
+              },
+              "qty": "50.0000"
+            },
+            {
+              "px": {
+                "value": "0.8600",
+                "currency": "USD"
+              },
+              "qty": "1.0000"
+            },
+            {
+              "px": {
+                "value": "0.9900",
+                "currency": "USD"
+              },
+              "qty": "1.0000"
+            },
+            {
+              "px": {
+                "value": "0.9950",
+                "currency": "USD"
+              },
+              "qty": "412.0000"
+            },
+            {
+              "px": {
+                "value": "0.9960",
+                "currency": "USD"
+              },
+              "qty": "62499.0000"
+            },
+            {
+              "px": {
+                "value": "0.9980",
+                "currency": "USD"
+              },
+              "qty": "124999.0000"
+            },
+            {
+              "px": {
+                "value": "0.9990",
+                "currency": "USD"
+              },
+              "qty": "249999.0000"
+            }
+          ],
+          "state": "MARKET_STATE_OPEN",
+          "stats": {
+            "openPx": {
+              "value": "0.1100",
+              "currency": "USD"
+            },
+            "closePx": {
+              "value": "0.1090",
+              "currency": "USD"
+            },
+            "lowPx": {
+              "value": "0.0560",
+              "currency": "USD"
+            },
+            "highPx": {
+              "value": "0.4960",
+              "currency": "USD"
+            },
+            "lastTradePx": {
+              "value": "0.1290",
+              "currency": "USD"
+            },
+            "settlementPx": {
+              "value": "0.1090",
+              "currency": "USD"
+            },
+            "sharesTraded": "31943.0000",
+            "notionalTraded": {
+              "value": "4218.8540",
+              "currency": "USD"
+            },
+            "lastTradeQty": "13.0000",
+            "openInterest": "142786.0000",
+            "openSetTime": "2026-09-12T21:16:14.636938646Z",
+            "closeSetTime": "2026-09-12T21:00:43.773358551Z",
+            "highSetTime": "2026-09-14T12:12:51.327613045Z",
+            "lowSetTime": "2026-09-25T11:48:00.178145953Z",
+            "lastTradeSetTime": "2026-09-28T20:09:11.817506769Z",
+            "settlementSetTime": "2026-09-12T21:00:43.773624931Z",
+            "openInterestSetTime": "2026-09-28T20:09:12.061216731Z",
+            "notionalSetTime": "2026-09-28T20:09:11.817506769Z",
+            "settlementPriceCalculationMethod": "SETTLEMENT_PRICE_CALCULATION_METHOD_EVENT_TIER_2",
+            "currentPx": {
+              "value": "0.1290",
+              "currency": "USD"
+            },
+            "lastPriceSample": {
+              "longPx": {
+                "value": "0.1290",
+                "currency": "USD"
+              },
+              "shortPx": {
+                "value": "0.871",
+                "currency": "USD"
+              },
+              "ts": "2026-09-28T22:23:17.386269766Z"
+            }
+          },
+          "transactTime": "2026-09-28T22:23:17.386269766Z"
+        }
+      },
+      "bbo": {
+        "marketData": {
+          "marketSlug": "tec-mlb-nlchamp-2026-09-27-atl",
+          "currentPx": {
+            "value": "0.1290",
+            "currency": "USD"
+          },
+          "lastTradePx": {
+            "value": "0.1290",
+            "currency": "USD"
+          },
+          "settlementPx": {
+            "value": "0.1090",
+            "currency": "USD"
+          },
+          "sharesTraded": "31943.0000",
+          "openInterest": "142786.0000",
+          "bestAsk": {
+            "value": "0.1340",
+            "currency": "USD"
+          },
+          "bestBid": {
+            "value": "0.1250",
+            "currency": "USD"
+          },
+          "askDepth": 9,
+          "bidDepth": 9,
+          "lastPriceSample": {
+            "longPx": {
+              "value": "0.1290",
+              "currency": "USD"
+            },
+            "shortPx": {
+              "value": "0.871",
+              "currency": "USD"
+            },
+            "ts": "2026-09-28T22:23:17.386269766Z"
+          },
+          "longQuote": {
+            "value": "0.1340",
+            "currency": "USD"
+          },
+          "shortQuote": {
+            "value": "0.875",
+            "currency": "USD"
+          },
+          "state": "MARKET_STATE_OPEN",
+          "bidShares": "260000",
+          "askShares": "430000"
+        }
+      }
+    },
+    {
+      "market": {
+        "id": "7901",
+        "slug": "tec-mlb-champ-2026-09-27-atl",
+        "question": "World Series Champion",
+        "title": "Atlanta Braves",
+        "category": "sports",
+        "status": "MARKET_STATUS_OPEN",
+        "active": true,
+        "closed": false,
+        "endDate": "2026-11-06T21:20:09Z",
+        "startDate": "2026-03-19T14:32:24Z",
+        "orderPriceMinTickSize": 0.001,
+        "feeCoefficient": 0.0695,
+        "bestBidQuote": {
+          "value": "0.0610",
+          "currency": "USD"
+        },
+        "bestAskQuote": {
+          "value": "0.0630",
+          "currency": "USD"
+        },
+        "minimumTradeQty": 1
+      },
+      "book": {
+        "marketData": {
+          "marketSlug": "tec-mlb-champ-2026-09-27-atl",
+          "bids": [
+            {
+              "px": {
+                "value": "0.0610",
+                "currency": "USD"
+              },
+              "qty": "671.0000"
+            },
+            {
+              "px": {
+                "value": "0.0600",
+                "currency": "USD"
+              },
+              "qty": "350.0000"
+            },
+            {
+              "px": {
+                "value": "0.0580",
+                "currency": "USD"
+              },
+              "qty": "9208.0000"
+            },
+            {
+              "px": {
+                "value": "0.0540",
+                "currency": "USD"
+              },
+              "qty": "40.0000"
+            },
+            {
+              "px": {
+                "value": "0.0530",
+                "currency": "USD"
+              },
+              "qty": "62176.0000"
+            },
+            {
+              "px": {
+                "value": "0.0510",
+                "currency": "USD"
+              },
+              "qty": "81.0000"
+            },
+            {
+              "px": {
+                "value": "0.0500",
+                "currency": "USD"
+              },
+              "qty": "400.0000"
+            },
+            {
+              "px": {
+                "value": "0.0440",
+                "currency": "USD"
+              },
+              "qty": "61.0000"
+            },
+            {
+              "px": {
+                "value": "0.0430",
+                "currency": "USD"
+              },
+              "qty": "19820.0000"
+            },
+            {
+              "px": {
+                "value": "0.0010",
+                "currency": "USD"
+              },
+              "qty": "25.0000"
+            }
+          ],
+          "offers": [
+            {
+              "px": {
+                "value": "0.0630",
+                "currency": "USD"
+              },
+              "qty": "50000.0000"
+            },
+            {
+              "px": {
+                "value": "0.0650",
+                "currency": "USD"
+              },
+              "qty": "214.0000"
+            },
+            {
+              "px": {
+                "value": "0.0660",
+                "currency": "USD"
+              },
+              "qty": "312.0000"
+            },
+            {
+              "px": {
+                "value": "0.0700",
+                "currency": "USD"
+              },
+              "qty": "1.0000"
+            },
+            {
+              "px": {
+                "value": "0.0730",
+                "currency": "USD"
+              },
+              "qty": "9849.0000"
+            },
+            {
+              "px": {
+                "value": "0.0780",
+                "currency": "USD"
+              },
+              "qty": "14224.0000"
+            },
+            {
+              "px": {
+                "value": "0.0880",
+                "currency": "USD"
+              },
+              "qty": "16283.0000"
+            },
+            {
+              "px": {
+                "value": "0.1400",
+                "currency": "USD"
+              },
+              "qty": "80.0000"
+            },
+            {
+              "px": {
+                "value": "0.1410",
+                "currency": "USD"
+              },
+              "qty": "118.0000"
+            },
+            {
+              "px": {
+                "value": "0.1500",
+                "currency": "USD"
+              },
+              "qty": "50.0000"
+            },
+            {
+              "px": {
+                "value": "0.1700",
+                "currency": "USD"
+              },
+              "qty": "1303.0000"
+            },
+            {
+              "px": {
+                "value": "0.1740",
+                "currency": "USD"
+              },
+              "qty": "3253.0000"
+            },
+            {
+              "px": {
+                "value": "0.9900",
+                "currency": "USD"
+              },
+              "qty": "1.0000"
+            },
+            {
+              "px": {
+                "value": "0.9990",
+                "currency": "USD"
+              },
+              "qty": "249999.0000"
+            }
+          ],
+          "state": "MARKET_STATE_OPEN",
+          "stats": {
+            "openPx": {
+              "value": "0.0730",
+              "currency": "USD"
+            },
+            "closePx": {
+              "value": "0.0590",
+              "currency": "USD"
+            },
+            "lowPx": {
+              "value": "0.0020",
+              "currency": "USD"
+            },
+            "highPx": {
+              "value": "0.1510",
+              "currency": "USD"
+            },
+            "lastTradePx": {
+              "value": "0.0620",
+              "currency": "USD"
+            },
+            "settlementPx": {
+              "value": "0.0590",
+              "currency": "USD"
+            },
+            "sharesTraded": "222843.0000",
+            "notionalTraded": {
+              "value": "16489.9110",
+              "currency": "USD"
+            },
+            "lastTradeQty": "7.0000",
+            "openInterest": "520604.0000",
+            "openSetTime": "2026-09-12T22:09:32.310200029Z",
+            "closeSetTime": "2026-09-12T21:00:44.203036619Z",
+            "highSetTime": "2026-09-17T02:08:30.104966989Z",
+            "lowSetTime": "2026-09-24T12:01:26.842468511Z",
+            "lastTradeSetTime": "2026-09-28T22:13:58.425915273Z",
+            "settlementSetTime": "2026-09-12T21:00:44.203077105Z",
+            "openInterestSetTime": "2026-09-28T22:13:58.443365030Z",
+            "notionalSetTime": "2026-09-28T22:13:58.425915273Z",
+            "settlementPriceCalculationMethod": "SETTLEMENT_PRICE_CALCULATION_METHOD_EVENT_TIER_2",
+            "currentPx": {
+              "value": "0.0620",
+              "currency": "USD"
+            },
+            "lastPriceSample": {
+              "longPx": {
+                "value": "0.0620",
+                "currency": "USD"
+              },
+              "shortPx": {
+                "value": "0.938",
+                "currency": "USD"
+              },
+              "ts": "2026-09-28T22:24:48.929543235Z"
+            }
+          },
+          "transactTime": "2026-09-28T22:24:48.929543235Z"
+        }
+      },
+      "bbo": {
+        "marketData": {
+          "marketSlug": "tec-mlb-champ-2026-09-27-atl",
+          "currentPx": {
+            "value": "0.0620",
+            "currency": "USD"
+          },
+          "lastTradePx": {
+            "value": "0.0620",
+            "currency": "USD"
+          },
+          "settlementPx": {
+            "value": "0.0590",
+            "currency": "USD"
+          },
+          "sharesTraded": "222843.0000",
+          "openInterest": "520604.0000",
+          "bestAsk": {
+            "value": "0.0630",
+            "currency": "USD"
+          },
+          "bestBid": {
+            "value": "0.0610",
+            "currency": "USD"
+          },
+          "askDepth": 14,
+          "bidDepth": 10,
+          "lastPriceSample": {
+            "longPx": {
+              "value": "0.0620",
+              "currency": "USD"
+            },
+            "shortPx": {
+              "value": "0.938",
+              "currency": "USD"
+            },
+            "ts": "2026-09-28T22:24:48.929543235Z"
+          },
+          "longQuote": {
+            "value": "0.0630",
+            "currency": "USD"
+          },
+          "shortQuote": {
+            "value": "0.939",
+            "currency": "USD"
+          },
+          "state": "MARKET_STATE_OPEN",
+          "bidShares": "92000",
+          "askShares": "340000"
+        }
+      }
+    },
+    {
+      "market": {
+        "id": "7902",
+        "slug": "tec-mlb-nlchamp-2026-09-27-sd",
+        "question": "National League Champion",
+        "title": "San Diego Padres",
+        "category": "sports",
+        "status": "MARKET_STATUS_OPEN",
+        "active": true,
+        "closed": false,
+        "endDate": "2026-11-06T21:20:09Z",
+        "startDate": "2026-03-19T14:32:23Z",
+        "orderPriceMinTickSize": 0.001,
+        "feeCoefficient": 0.0695,
+        "bestBidQuote": {
+          "value": "0.1260",
+          "currency": "USD"
+        },
+        "bestAskQuote": {
+          "value": "0.1290",
+          "currency": "USD"
+        },
+        "minimumTradeQty": 1
+      },
+      "book": {
+        "marketData": {
+          "marketSlug": "tec-mlb-nlchamp-2026-09-27-sd",
+          "bids": [
+            {
+              "px": {
+                "value": "0.1260",
+                "currency": "USD"
+              },
+              "qty": "2.0000"
+            },
+            {
+              "px": {
+                "value": "0.1250",
+                "currency": "USD"
+              },
+              "qty": "1.0000"
+            },
+            {
+              "px": {
+                "value": "0.1120",
+                "currency": "USD"
+              },
+              "qty": "6.0000"
+            },
+            {
+              "px": {
+                "value": "0.1110",
+                "currency": "USD"
+              },
+              "qty": "75.0000"
+            },
+            {
+              "px": {
+                "value": "0.1060",
+                "currency": "USD"
+              },
+              "qty": "67.0000"
+            },
+            {
+              "px": {
+                "value": "0.1050",
+                "currency": "USD"
+              },
+              "qty": "278.0000"
+            },
+            {
+              "px": {
+                "value": "0.0420",
+                "currency": "USD"
+              },
+              "qty": "14.0000"
+            },
+            {
+              "px": {
+                "value": "0.0310",
+                "currency": "USD"
+              },
+              "qty": "13.0000"
+            },
+            {
+              "px": {
+                "value": "0.0300",
+                "currency": "USD"
+              },
+              "qty": "150.0000"
+            },
+            {
+              "px": {
+                "value": "0.0020",
+                "currency": "USD"
+              },
+              "qty": "125000.0000"
+            },
+            {
+              "px": {
+                "value": "0.0010",
+                "currency": "USD"
+              },
+              "qty": "250000.0000"
+            }
+          ],
+          "offers": [
+            {
+              "px": {
+                "value": "0.1290",
+                "currency": "USD"
+              },
+              "qty": "152.0000"
+            },
+            {
+              "px": {
+                "value": "0.1300",
+                "currency": "USD"
+              },
+              "qty": "301.0000"
+            },
+            {
+              "px": {
+                "value": "0.1510",
+                "currency": "USD"
+              },
+              "qty": "5.0000"
+            },
+            {
+              "px": {
+                "value": "0.1890",
+                "currency": "USD"
+              },
+              "qty": "4.0000"
+            },
+            {
+              "px": {
+                "value": "0.1900",
+                "currency": "USD"
+              },
+              "qty": "49.0000"
+            },
+            {
+              "px": {
+                "value": "0.8790",
+                "currency": "USD"
+              },
+              "qty": "500.0000"
+            },
+            {
+              "px": {
+                "value": "0.8800",
+                "currency": "USD"
+              },
+              "qty": "4637.0000"
+            },
+            {
+              "px": {
+                "value": "0.9900",
+                "currency": "USD"
+              },
+              "qty": "1.0000"
+            },
+            {
+              "px": {
+                "value": "0.9980",
+                "currency": "USD"
+              },
+              "qty": "124999.0000"
+            },
+            {
+              "px": {
+                "value": "0.9990",
+                "currency": "USD"
+              },
+              "qty": "249999.0000"
+            }
+          ],
+          "state": "MARKET_STATE_OPEN",
+          "stats": {
+            "openPx": {
+              "value": "0.0490",
+              "currency": "USD"
+            },
+            "closePx": {
+              "value": "0.0510",
+              "currency": "USD"
+            },
+            "lowPx": {
+              "value": "0.0020",
+              "currency": "USD"
+            },
+            "highPx": {
+              "value": "0.1900",
+              "currency": "USD"
+            },
+            "lastTradePx": {
+              "value": "0.1290",
+              "currency": "USD"
+            },
+            "settlementPx": {
+              "value": "0.0510",
+              "currency": "USD"
+            },
+            "sharesTraded": "44294.0000",
+            "notionalTraded": {
+              "value": "3595.0700",
+              "currency": "USD"
+            },
+            "lastTradeQty": "43.0000",
+            "openInterest": "80502.0000",
+            "openSetTime": "2026-09-12T21:24:24.285900998Z",
+            "closeSetTime": "2026-09-12T21:00:41.291564027Z",
+            "highSetTime": "2026-09-28T18:17:57.798297352Z",
+            "lowSetTime": "2026-09-24T11:51:51.312277616Z",
+            "lastTradeSetTime": "2026-09-28T21:57:12.839338402Z",
+            "settlementSetTime": "2026-09-12T21:00:41.291587852Z",
+            "openInterestSetTime": "2026-09-28T21:57:12.881041218Z",
+            "notionalSetTime": "2026-09-28T21:57:12.839338402Z",
+            "settlementPriceCalculationMethod": "SETTLEMENT_PRICE_CALCULATION_METHOD_EVENT_TIER_2",
+            "currentPx": {
+              "value": "0.1270",
+              "currency": "USD"
+            },
+            "lastPriceSample": {
+              "longPx": {
+                "value": "0.1290",
+                "currency": "USD"
+              },
+              "shortPx": {
+                "value": "0.871",
+                "currency": "USD"
+              },
+              "ts": "2026-09-28T22:23:39.404989768Z"
+            }
+          },
+          "transactTime": "2026-09-28T22:23:39.404989768Z"
+        }
+      },
+      "bbo": {
+        "marketData": {
+          "marketSlug": "tec-mlb-nlchamp-2026-09-27-sd",
+          "currentPx": {
+            "value": "0.1270",
+            "currency": "USD"
+          },
+          "lastTradePx": {
+            "value": "0.1290",
+            "currency": "USD"
+          },
+          "settlementPx": {
+            "value": "0.0510",
+            "currency": "USD"
+          },
+          "sharesTraded": "44294.0000",
+          "openInterest": "80502.0000",
+          "bestAsk": {
+            "value": "0.1290",
+            "currency": "USD"
+          },
+          "bestBid": {
+            "value": "0.1260",
+            "currency": "USD"
+          },
+          "askDepth": 10,
+          "bidDepth": 11,
+          "lastPriceSample": {
+            "longPx": {
+              "value": "0.1290",
+              "currency": "USD"
+            },
+            "shortPx": {
+              "value": "0.871",
+              "currency": "USD"
+            },
+            "ts": "2026-09-28T22:23:39.404989768Z"
+          },
+          "longQuote": {
+            "value": "0.1290",
+            "currency": "USD"
+          },
+          "shortQuote": {
+            "value": "0.874",
+            "currency": "USD"
+          },
+          "state": "MARKET_STATE_OPEN",
+          "bidShares": "370000",
+          "askShares": "380000"
+        }
+      }
+    },
+    {
+      "market": {
+        "id": "7906",
+        "slug": "tec-mlb-champ-2026-09-27-chc",
+        "question": "World Series Champion",
+        "title": "Chicago Cubs",
+        "category": "sports",
+        "status": "MARKET_STATUS_OPEN",
+        "active": true,
+        "closed": false,
+        "endDate": "2026-11-06T21:20:09Z",
+        "startDate": "2026-03-19T14:32:24Z",
+        "orderPriceMinTickSize": 0.001,
+        "feeCoefficient": 0.0695,
+        "bestBidQuote": {
+          "value": "0.0400",
+          "currency": "USD"
+        },
+        "bestAskQuote": {
+          "value": "0.0440",
+          "currency": "USD"
+        },
+        "minimumTradeQty": 1
+      },
+      "book": {
+        "marketData": {
+          "marketSlug": "tec-mlb-champ-2026-09-27-chc",
+          "bids": [
+            {
+              "px": {
+                "value": "0.0400",
+                "currency": "USD"
+              },
+              "qty": "2149.0000"
+            },
+            {
+              "px": {
+                "value": "0.0390",
+                "currency": "USD"
+              },
+              "qty": "446.0000"
+            },
+            {
+              "px": {
+                "value": "0.0380",
+                "currency": "USD"
+              },
+              "qty": "63.0000"
+            },
+            {
+              "px": {
+                "value": "0.0370",
+                "currency": "USD"
+              },
+              "qty": "10243.0000"
+            },
+            {
+              "px": {
+                "value": "0.0340",
+                "currency": "USD"
+              },
+              "qty": "28.0000"
+            },
+            {
+              "px": {
+                "value": "0.0330",
+                "currency": "USD"
+              },
+              "qty": "50.0000"
+            },
+            {
+              "px": {
+                "value": "0.0120",
+                "currency": "USD"
+              },
+              "qty": "14.0000"
+            },
+            {
+              "px": {
+                "value": "0.0110",
+                "currency": "USD"
+              },
+              "qty": "9293.0000"
+            },
+            {
+              "px": {
+                "value": "0.0060",
+                "currency": "USD"
+              },
+              "qty": "13533.0000"
+            },
+            {
+              "px": {
+                "value": "0.0010",
+                "currency": "USD"
+              },
+              "qty": "100.0000"
+            }
+          ],
+          "offers": [
+            {
+              "px": {
+                "value": "0.0440",
+                "currency": "USD"
+              },
+              "qty": "17593.0000"
+            },
+            {
+              "px": {
+                "value": "0.0500",
+                "currency": "USD"
+              },
+              "qty": "1.0000"
+            },
+            {
+              "px": {
+                "value": "0.0510",
+                "currency": "USD"
+              },
+              "qty": "10.0000"
+            },
+            {
+              "px": {
+                "value": "0.0520",
+                "currency": "USD"
+              },
+              "qty": "23.0000"
+            },
+            {
+              "px": {
+                "value": "0.0530",
+                "currency": "USD"
+              },
+              "qty": "9608.0000"
+            },
+            {
+              "px": {
+                "value": "0.0570",
+                "currency": "USD"
+              },
+              "qty": "6.0000"
+            },
+            {
+              "px": {
+                "value": "0.0580",
+                "currency": "USD"
+              },
+              "qty": "14303.0000"
+            },
+            {
+              "px": {
+                "value": "0.0680",
+                "currency": "USD"
+              },
+              "qty": "19807.0000"
+            },
+            {
+              "px": {
+                "value": "0.1000",
+                "currency": "USD"
+              },
+              "qty": "100.0000"
+            },
+            {
+              "px": {
+                "value": "0.1300",
+                "currency": "USD"
+              },
+              "qty": "50.0000"
+            },
+            {
+              "px": {
+                "value": "0.9400",
+                "currency": "USD"
+              },
+              "qty": "5271.0000"
+            },
+            {
+              "px": {
+                "value": "0.9900",
+                "currency": "USD"
+              },
+              "qty": "1.0000"
+            },
+            {
+              "px": {
+                "value": "0.9990",
+                "currency": "USD"
+              },
+              "qty": "249999.0000"
+            }
+          ],
+          "state": "MARKET_STATE_OPEN",
+          "stats": {
+            "openPx": {
+              "value": "0.0390",
+              "currency": "USD"
+            },
+            "closePx": {
+              "value": "0.0410",
+              "currency": "USD"
+            },
+            "lowPx": {
+              "value": "0.0270",
+              "currency": "USD"
+            },
+            "highPx": {
+              "value": "0.0910",
+              "currency": "USD"
+            },
+            "lastTradePx": {
+              "value": "0.0440",
+              "currency": "USD"
+            },
+            "settlementPx": {
+              "value": "0.0410",
+              "currency": "USD"
+            },
+            "sharesTraded": "179221.0000",
+            "notionalTraded": {
+              "value": "8981.7520",
+              "currency": "USD"
+            },
+            "lastTradeQty": "63.0000",
+            "openInterest": "675413.0000",
+            "openSetTime": "2026-09-12T21:26:41.512218211Z",
+            "closeSetTime": "2026-09-12T21:00:50.652862607Z",
+            "highSetTime": "2026-09-13T21:50:48.423549924Z",
+            "lowSetTime": "2026-09-25T17:13:01.018277526Z",
+            "lastTradeSetTime": "2026-09-28T22:19:13.168748338Z",
+            "settlementSetTime": "2026-09-12T21:00:50.652920371Z",
+            "openInterestSetTime": "2026-09-28T22:19:13.184498192Z",
+            "notionalSetTime": "2026-09-28T22:19:13.168748338Z",
+            "settlementPriceCalculationMethod": "SETTLEMENT_PRICE_CALCULATION_METHOD_EVENT_TIER_2",
+            "currentPx": {
+              "value": "0.0420",
+              "currency": "USD"
+            },
+            "lastPriceSample": {
+              "longPx": {
+                "value": "0.0440",
+                "currency": "USD"
+              },
+              "shortPx": {
+                "value": "0.956",
+                "currency": "USD"
+              },
+              "ts": "2026-09-28T22:21:08.095638732Z"
+            }
+          },
+          "transactTime": "2026-09-28T22:21:08.095638732Z"
+        }
+      },
+      "bbo": {
+        "marketData": {
+          "marketSlug": "tec-mlb-champ-2026-09-27-chc",
+          "currentPx": {
+            "value": "0.0420",
+            "currency": "USD"
+          },
+          "lastTradePx": {
+            "value": "0.0440",
+            "currency": "USD"
+          },
+          "settlementPx": {
+            "value": "0.0410",
+            "currency": "USD"
+          },
+          "sharesTraded": "179221.0000",
+          "openInterest": "675413.0000",
+          "bestAsk": {
+            "value": "0.0440",
+            "currency": "USD"
+          },
+          "bestBid": {
+            "value": "0.0400",
+            "currency": "USD"
+          },
+          "askDepth": 13,
+          "bidDepth": 10,
+          "lastPriceSample": {
+            "longPx": {
+              "value": "0.0440",
+              "currency": "USD"
+            },
+            "shortPx": {
+              "value": "0.956",
+              "currency": "USD"
+            },
+            "ts": "2026-09-28T22:21:08.095638732Z"
+          },
+          "longQuote": {
+            "value": "0.0440",
+            "currency": "USD"
+          },
+          "shortQuote": {
+            "value": "0.96",
+            "currency": "USD"
+          },
+          "state": "MARKET_STATE_OPEN",
+          "bidShares": "35000",
+          "askShares": "310000"
+        }
+      }
+    }
+  ]
+}
