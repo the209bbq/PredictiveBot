@@ -9,6 +9,7 @@ from pathlib import Path
 
 from polymarket_bot.compare import collect_snapshots, compare_snapshots, format_compare_report
 from polymarket_bot.config import load_config
+from polymarket_bot.demo.session import format_demo_report, run_demo_session
 from polymarket_bot.exchanges.factory import build_client
 from polymarket_bot.exchanges.kalshi import KalshiClient
 from polymarket_bot.guard import DemoOrderError, LiveTradingDisabled
@@ -124,6 +125,38 @@ def cmd_kalshi_demo(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_kalshi_demo_session(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    # Books and orders both hit the demo host so tickers exist there.
+    client = KalshiClient(config, data_base_url=config.kalshi.demo_base_url)
+    logger = DecisionLogger(Path("logs/demo_decisions.jsonl"), config.logging.level)
+    try:
+        state = run_demo_session(
+            client,
+            config,
+            logger,
+            confirm_demo=args.confirm_demo,
+            ticks=args.ticks,
+            ticker=args.ticker,
+            sleep=not args.no_sleep,
+        )
+    finally:
+        logger.close()
+        client.close()
+    report = format_demo_report(state)
+    report_path = Path("logs/demo_report.txt")
+    state_path = Path("logs/demo_state.json")
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(report)
+    state_path.write_text(json.dumps(state, default=json_default, indent=2))
+    print(report)
+    print(f"Wrote {report_path} and {state_path}")
+    if state.get("resting_alert") or state.get("resting_leftover"):
+        print(state.get("resting_alert") or "ALERT: resting Kalshi DEMO orders remain.", file=sys.stderr)
+        return 2
+    return 0
+
+
 def cmd_live(_args: argparse.Namespace) -> int:
     start_live_trading()
     return 2
@@ -163,13 +196,23 @@ def build_parser() -> argparse.ArgumentParser:
     compare.add_argument("--pm-fixture", default=None)
     compare.set_defaults(func=cmd_compare)
 
-    demo = sub.add_parser("kalshi-demo-order", help="Opt-in order on Kalshi DEMO only")
+    demo = sub.add_parser("kalshi-demo-order", help="Opt-in single order on Kalshi DEMO only")
     demo.add_argument("--ticker", required=True)
     demo.add_argument("--side", choices=["bid", "ask"], default="bid")
     demo.add_argument("--price", default="0.0100")
     demo.add_argument("--count", default="1")
     demo.add_argument("--confirm-demo", action="store_true")
     demo.set_defaults(func=cmd_kalshi_demo)
+
+    demo_session = sub.add_parser(
+        "kalshi-demo",
+        help="Opt-in Kalshi DEMO session (quote / re-quote / cancel + report)",
+    )
+    demo_session.add_argument("--ticker", default=None, help="Demo ticker; otherwise scan demo books")
+    demo_session.add_argument("--ticks", type=int, default=None)
+    demo_session.add_argument("--no-sleep", action="store_true")
+    demo_session.add_argument("--confirm-demo", action="store_true")
+    demo_session.set_defaults(func=cmd_kalshi_demo_session)
 
     live = sub.add_parser("live", help="Disabled. Always raises.")
     live.set_defaults(func=cmd_live)

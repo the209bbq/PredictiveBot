@@ -76,6 +76,8 @@ class MarketSnapshot:
     event_title: str | None = None
     fee_type: str | None = None
     fee_multiplier: Decimal = Decimal("1")
+    stale: bool = False
+    book_fetched: bool = False
 
     @property
     def liquid(self) -> bool:

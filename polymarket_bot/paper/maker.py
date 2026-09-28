@@ -1,4 +1,4 @@
-"""Maker-only quotes around mid, inventory-skewed."""
+"""Maker-only quotes: join or improve the touch, inventory-skewed."""
 
 from __future__ import annotations
 
@@ -36,28 +36,50 @@ def desired_quotes(
     maker = config.paper.maker
     if not maker.enabled:
         return []
+    if snap.stale or not snap.book_fetched:
+        return []
     if snap.mid is None or snap.best_bid is None or snap.best_ask is None:
         return []
     if past_resolution_cutoff(snap, config.paper.risk.maker_min_hours_to_resolution):
         return []
 
+    tick = snap.tick_size or config.paper.tick_size_fallback
+    if tick <= 0:
+        return []
     pos = portfolio.position(snap.slug).qty
     skew = pos * maker.inventory_skew_per_contract
-    # Long inventory → shade both quotes down so we are more likely to sell.
-    raw_bid = snap.mid - maker.half_spread - skew
-    raw_ask = snap.mid + maker.half_spread - skew
-    tick = snap.tick_size or config.paper.tick_size_fallback
+    improve = tick * Decimal(max(0, maker.improve_ticks))
+    spread = snap.best_ask - snap.best_bid
+
+    # Join the touch on a one-tick book; improve when there is room.
+    if spread >= tick * 3:
+        raw_bid = snap.best_bid + improve
+        raw_ask = snap.best_ask - improve
+    else:
+        raw_bid = snap.best_bid
+        raw_ask = snap.best_ask
+    raw_bid -= skew
+    raw_ask -= skew
+
+    # Stay inside half_spread of mid so we do not chase a wide book.
+    raw_bid = max(raw_bid, snap.mid - maker.half_spread)
+    raw_ask = min(raw_ask, snap.mid + maker.half_spread)
+
     bid = clamp_price(raw_bid, tick)
     ask = clamp_price(raw_ask, tick)
-    if bid is None or ask is None or bid >= ask:
-        return []
-    # Stay maker: never join or cross the opposite side.
-    if bid >= snap.best_ask or ask <= snap.best_bid:
+    if bid is not None and ask is not None and bid >= ask:
         return []
 
     qty = config.paper.quote_size_contracts
     orders: list[PaperOrder] = []
     for side, price in (("buy", bid), ("sell", ask)):
+        if price is None:
+            continue
+        # Maker-only: never cross or lock the opposite side.
+        if side == "buy" and price >= snap.best_ask:
+            continue
+        if side == "sell" and price <= snap.best_bid:
+            continue
         if would_breach_position(portfolio, snap.slug, side, qty, config.paper.risk):
             continue
         if not portfolio.buying_power_ok(side, price, qty):

@@ -32,6 +32,8 @@ def fill_reason(
     *,
     strict: bool = True,
 ) -> str | None:
+    if cur.stale:
+        return None
     if order.side == "buy":
         if last_trade_changed(prev, cur) and cur.last_trade is not None:
             if (cur.last_trade < order.price) if strict else (cur.last_trade <= order.price):

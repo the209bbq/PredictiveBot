@@ -11,8 +11,9 @@ api:
   gateway_base_url: https://gateway.polymarket.us
   api_base_url: https://api.polymarket.us
   request_timeout_seconds: 30
-  max_retries: 2
-  min_request_interval_seconds: 0.12
+  max_retries: 4
+  # Polymarket US Cloudflare 429s hard; pace book fetches.
+  min_request_interval_seconds: 0.35
 
 kalshi:
   # Public production market data (no keys). Orders are never sent here.
@@ -27,8 +28,12 @@ kalshi:
 scanner:
   active_only: true
   include_closed: false
-  max_markets_to_list: 40
-  max_book_fetches: 20
+  # Demo/prod list 40k+ open markets. Paginate and rank before fetching books.
+  max_markets_to_list: 800
+  list_page_size: 200
+  max_list_pages: 6
+  # Fetch fewer books (PM 429s; Kalshi last-trade adds a second call per market).
+  max_book_fetches: 10
   min_volume_shares: 0
   min_bid_depth_contracts: 20
   min_ask_depth_contracts: 20
@@ -45,8 +50,11 @@ paper:
   tick_size_fallback: 0.01
   maker:
     enabled: true
+    # Cap how far from mid we will quote on a wide book.
     half_spread: 0.02
     inventory_skew_per_contract: 0.0004
+    # Join the touch on 1–2 tick books; improve this many ticks when spread >= 3 ticks.
+    improve_ticks: 1
   near_resolution:
     enabled: true
     min_price: 0.94
@@ -64,9 +72,12 @@ paper:
     require_strict_trade_through: true
 
 compare:
-  max_markets_each: 30
+  max_markets_each: 20
   min_title_score: 0.34
+  # Dollars PER CONTRACT after both venues' taker fees. Not a 100-contract clip total.
+  # 0.01 = one cent per contract. A $0.01 gap on 100 contracts is 0.0001 $/contract.
   min_net_edge: 0.01
+  # Clip used only to show dollar totals in the report (fees are scaled to this size).
   contract_size: 100
 
 logging:

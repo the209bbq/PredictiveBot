@@ -102,4 +102,6 @@ def snapshot_from_payloads(
         bids=bids,
         asks=asks,
         raw={"market": market, "book": book, "bbo": bbo},
+        book_fetched=book is not None,
+        stale=False,
     )

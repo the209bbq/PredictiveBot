@@ -23,7 +23,10 @@ from polymarket_bot.guard import (
     refuse_live_call,
 )
 from polymarket_bot.market_data import BookLevel, MarketSnapshot, as_datetime, as_decimal
+from polymarket_bot.market_data.errors import BookFetchError
 from polymarket_bot.market_data.normalize import depth_from_levels, hours_to_resolution
+
+_RETRY_STATUSES = {429, 500, 502, 503, 504}
 
 ONE = Decimal("1")
 
@@ -70,7 +73,14 @@ def snapshot_from_kalshi(
         spread = best_ask - best_bid
 
     volume = as_decimal(market.get("volume_24h_fp")) or as_decimal(market.get("volume_fp"))
-    end_date = as_datetime(market.get("close_time") or market.get("expected_expiration_time"))
+    close_date = as_datetime(market.get("close_time"))
+    event_date = as_datetime(market.get("expected_expiration_time"))
+    # Official close is often hours after the event. Use the earlier timestamp
+    # so near-resolution and cutoffs track the event, not settlement.
+    candidates = [dt for dt in (event_date, close_date) if dt is not None]
+    end_date = min(candidates) if candidates else None
+    list_bid_sz = as_decimal(market.get("yes_bid_size_fp")) or Decimal("0")
+    list_ask_sz = as_decimal(market.get("yes_ask_size_fp")) or Decimal("0")
     question = str(
         market.get("event_title")
         or market.get("title")
@@ -96,8 +106,8 @@ def snapshot_from_kalshi(
         volume_shares=volume,
         open_interest=as_decimal(market.get("open_interest_fp")),
         notional_traded=as_decimal(market.get("liquidity_dollars")),
-        bid_depth_contracts=depth_from_levels(yes_bids),
-        ask_depth_contracts=depth_from_levels(yes_asks),
+        bid_depth_contracts=depth_from_levels(yes_bids) if yes_bids else list_bid_sz,
+        ask_depth_contracts=depth_from_levels(yes_asks) if yes_asks else list_ask_sz,
         tick_size=tick_size_fallback,
         fee_coefficient=Decimal("0.07"),
         bids=yes_bids,
@@ -107,6 +117,8 @@ def snapshot_from_kalshi(
         event_title=market.get("event_title"),
         fee_type=str(market.get("fee_type") or "quadratic"),
         fee_multiplier=fee_mult,
+        stale=False,
+        book_fetched=bool(yes_bids or yes_asks),
     )
 
 
@@ -136,7 +148,8 @@ class KalshiClient:
         url = f"{base}{path}"
         delay = 0.25
         last_exc: Exception | None = None
-        for _ in range(max(1, self.config.api.max_retries + 2)):
+        attempts = max(1, self.config.api.max_retries + 2)
+        for _ in range(attempts):
             self._pace()
             try:
                 response = self._http.get(url, params=params)
@@ -145,14 +158,18 @@ class KalshiClient:
                 time.sleep(delay)
                 delay = min(delay * 2, 8)
                 continue
-            if response.status_code == 429:
-                # Docs: 429 has no Retry-After. Exponential backoff.
+            if response.status_code in _RETRY_STATUSES:
+                last_exc = RuntimeError(f"HTTP {response.status_code}")
                 time.sleep(delay)
                 delay = min(delay * 2, 8)
                 continue
-            response.raise_for_status()
-            return response.json()
-        raise RuntimeError(f"Kalshi GET {path} failed after retries: {last_exc}")
+            try:
+                response.raise_for_status()
+                return response.json()
+            except Exception as exc:
+                last_exc = exc
+                break
+        raise BookFetchError(f"Kalshi GET {path} failed after retries: {last_exc}")
 
     def list_markets(
         self,
@@ -163,21 +180,47 @@ class KalshiClient:
         offset: int = 0,
         series_ticker: str | None = None,
     ) -> list[dict[str, Any]]:
-        params: dict[str, Any] = {"limit": min(limit, 1000), "mve_filter": "exclude"}
-        if active and not closed:
-            params["status"] = "open"
-        if series_ticker:
-            params["series_ticker"] = series_ticker
-        payload = self._get(self.data_base_url, "/markets", params)
-        rows = []
-        for market in payload.get("markets") or []:
-            market = dict(market)
-            market["slug"] = market.get("ticker")
-            rows.append(market)
+        page_size = min(1000, max(1, getattr(self.config.scanner, "list_page_size", 200)))
+        max_pages = max(1, getattr(self.config.scanner, "max_list_pages", 6))
+        rows: list[dict[str, Any]] = []
+        cursor: str | None = None
+        pages = 0
+        while len(rows) < offset + limit and pages < max_pages:
+            params: dict[str, Any] = {
+                "limit": min(page_size, offset + limit - len(rows)),
+                "mve_filter": "exclude",
+            }
+            if active and not closed:
+                params["status"] = "open"
+            if series_ticker:
+                params["series_ticker"] = series_ticker
+            if cursor:
+                params["cursor"] = cursor
+            payload = self._get(self.data_base_url, "/markets", params)
+            pages += 1
+            batch = payload.get("markets") or []
+            for market in batch:
+                market = dict(market)
+                market["slug"] = market.get("ticker")
+                rows.append(market)
+            cursor = payload.get("cursor") or None
+            if not batch or not cursor:
+                break
         return rows[offset : offset + limit]
 
     def book(self, slug: str) -> dict[str, Any]:
         return self._get(self.data_base_url, f"/markets/{slug}/orderbook", {"depth": 10})
+
+    def last_trade(self, slug: str) -> Decimal | None:
+        payload = self._get(
+            self.data_base_url,
+            "/markets/trades",
+            {"ticker": slug, "limit": 1, "is_block_trade": False},
+        )
+        trades = payload.get("trades") or []
+        if not trades:
+            return None
+        return as_decimal(trades[0].get("yes_price_dollars"))
 
     def snapshot(
         self,
@@ -199,6 +242,38 @@ class KalshiClient:
         except Exception:
             return None
 
+    def _assert_demo(self, confirm_demo: bool) -> None:
+        if not confirm_demo:
+            raise DemoOrderError("Pass --confirm-demo to place Kalshi demo orders.")
+        assert_kalshi_demo_orders_allowed(
+            enabled=self.config.kalshi.demo_orders_enabled,
+            base_url=self.demo_base_url,
+        )
+        if is_kalshi_production_url(self.demo_base_url):
+            refuse_live_call("kalshi_production_order")
+
+    def signed_demo(
+        self,
+        method: str,
+        path: str,
+        *,
+        body: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
+        confirm_demo: bool = True,
+    ) -> dict[str, Any]:
+        self._assert_demo(confirm_demo)
+        key_id, private_key = load_demo_credentials()
+        return signed_request(
+            base_url=self.demo_base_url,
+            method=method,
+            path=path,
+            key_id=key_id,
+            private_key=private_key,
+            body=body,
+            params=params,
+            max_retries=self.config.api.max_retries + 3,
+        )
+
     def place_demo_order(
         self,
         *,
@@ -207,22 +282,12 @@ class KalshiClient:
         price: str,
         count: str,
         confirm_demo: bool,
+        post_only: bool = True,
     ) -> dict[str, Any]:
-        if not confirm_demo:
-            raise DemoOrderError("Pass --confirm-demo to place a Kalshi demo order.")
-        assert_kalshi_demo_orders_allowed(
-            enabled=self.config.kalshi.demo_orders_enabled,
-            base_url=self.demo_base_url,
-        )
-        if is_kalshi_production_url(self.demo_base_url):
-            refuse_live_call("kalshi_production_order")
-        key_id, private_key = load_demo_credentials()
-        return _signed_request(
-            base_url=self.demo_base_url,
-            method="POST",
-            path="/portfolio/events/orders",
-            key_id=key_id,
-            private_key=private_key,
+        return self.signed_demo(
+            "POST",
+            "/portfolio/events/orders",
+            confirm_demo=confirm_demo,
             body={
                 "ticker": ticker,
                 "side": side,
@@ -230,16 +295,98 @@ class KalshiClient:
                 "price": str(price),
                 "time_in_force": "good_till_canceled",
                 "self_trade_prevention_type": "taker_at_cross",
-                "post_only": True,
+                "post_only": post_only,
                 "client_order_id": str(uuid.uuid4()),
             },
         )
+
+    def cancel_demo_order(self, order_id: str, *, ticker: str | None, confirm_demo: bool) -> dict[str, Any]:
+        params = {"market_ticker": ticker} if ticker else None
+        return self.signed_demo(
+            "DELETE",
+            f"/portfolio/events/orders/{order_id}",
+            confirm_demo=confirm_demo,
+            params=params,
+        )
+
+    def cancel_all_demo_orders(self, *, confirm_demo: bool) -> dict[str, Any]:
+        """DELETE /portfolio/events/orders — cancel every resting demo order."""
+        return self.signed_demo("DELETE", "/portfolio/events/orders", confirm_demo=confirm_demo)
+
+    def batch_cancel_demo_orders(
+        self,
+        orders: list[dict[str, str]],
+        *,
+        confirm_demo: bool,
+    ) -> dict[str, Any]:
+        return self.signed_demo(
+            "DELETE",
+            "/portfolio/events/orders/batched",
+            confirm_demo=confirm_demo,
+            body={"orders": orders},
+        )
+
+    def list_demo_orders(self, *, status: str = "resting", confirm_demo: bool) -> list[dict[str, Any]]:
+        payload = self.signed_demo(
+            "GET",
+            "/portfolio/orders",
+            confirm_demo=confirm_demo,
+            params={"status": status, "limit": 200},
+        )
+        return list(payload.get("orders") or [])
+
+    def demo_balance(self, *, confirm_demo: bool) -> dict[str, Any]:
+        return self.signed_demo("GET", "/portfolio/balance", confirm_demo=confirm_demo)
+
+    def demo_positions(self, *, confirm_demo: bool) -> dict[str, Any]:
+        return self.signed_demo("GET", "/portfolio/positions", confirm_demo=confirm_demo)
+
+    def demo_fills(self, *, confirm_demo: bool, limit: int = 100) -> list[dict[str, Any]]:
+        payload = self.signed_demo(
+            "GET",
+            "/portfolio/fills",
+            confirm_demo=confirm_demo,
+            params={"limit": limit},
+        )
+        return list(payload.get("fills") or payload.get("market_positions") or [])
+
+    def shutdown_demo_orders(self, *, confirm_demo: bool) -> list[dict[str, Any]]:
+        """Cancel-all with retries, then verify no resting orders remain."""
+        last_error = None
+        for _ in range(4):
+            try:
+                self.cancel_all_demo_orders(confirm_demo=confirm_demo)
+                last_error = None
+                break
+            except DemoOrderError as exc:
+                last_error = exc
+                time.sleep(1.0)
+        remaining = self.list_demo_orders(status="resting", confirm_demo=confirm_demo)
+        if remaining:
+            batch = [
+                {"order_id": row.get("order_id"), "market_ticker": row.get("ticker")}
+                for row in remaining
+                if row.get("order_id")
+            ]
+            if batch:
+                try:
+                    self.batch_cancel_demo_orders(batch, confirm_demo=confirm_demo)
+                except DemoOrderError as exc:
+                    last_error = exc
+                remaining = self.list_demo_orders(status="resting", confirm_demo=confirm_demo)
+        if remaining:
+            raise DemoOrderError(
+                "ALERT: resting Kalshi DEMO orders remain after cancel-all. "
+                f"Count={len(remaining)} last_error={last_error} "
+                f"ids={[row.get('order_id') for row in remaining]}"
+            )
+        return remaining
 
     def close(self) -> None:
         self._http.close()
 
 
-def _signed_request(
+def signed_request(
     *,
     base_url: str,
     method: str,
@@ -247,35 +394,51 @@ def _signed_request(
     key_id: str,
     private_key: Any,
     body: dict[str, Any] | None = None,
+    params: dict[str, Any] | None = None,
+    max_retries: int = 6,
 ) -> dict[str, Any]:
-    timestamp = str(int(datetime.now(timezone.utc).timestamp() * 1000))
-    sign_path = signing_path(base_url, path)
-    headers = access_headers(
-        key_id=key_id,
-        private_key=private_key,
-        method=method,
-        sign_path=sign_path,
-        timestamp=timestamp,
-    )
-    headers["User-Agent"] = "PredictiveBot/0.2 (kalshi-demo)"
-    if body is not None:
-        headers["Content-Type"] = "application/json"
+    """Signed Kalshi call. Retries 429 and 5xx with a fresh timestamp each try."""
     delay = 0.25
+    last_error = "unknown"
     with httpx.Client(timeout=30.0) as client:
-        for _ in range(4):
-            response = client.request(
-                method,
-                base_url.rstrip("/") + "/" + path.lstrip("/"),
-                headers=headers,
-                json=body,
+        for _ in range(max(1, max_retries)):
+            timestamp = str(int(datetime.now(timezone.utc).timestamp() * 1000))
+            sign_path = signing_path(base_url, path)
+            headers = access_headers(
+                key_id=key_id,
+                private_key=private_key,
+                method=method,
+                sign_path=sign_path,
+                timestamp=timestamp,
             )
-            if response.status_code == 429:
+            headers["User-Agent"] = "PredictiveBot/0.2 (kalshi-demo)"
+            if body is not None:
+                headers["Content-Type"] = "application/json"
+            try:
+                response = client.request(
+                    method,
+                    base_url.rstrip("/") + "/" + path.lstrip("/"),
+                    headers=headers,
+                    json=body,
+                    params=params,
+                )
+            except httpx.HTTPError as exc:
+                last_error = str(exc)
                 time.sleep(delay)
                 delay = min(delay * 2, 8)
                 continue
+            if response.status_code in _RETRY_STATUSES:
+                last_error = f"{response.status_code} {response.text[:200]}"
+                time.sleep(delay)
+                delay = min(delay * 2, 8)
+                continue
+            if response.status_code == 204:
+                return {}
             if response.status_code >= 400:
                 raise DemoOrderError(
                     f"Kalshi demo {method} {path} failed: {response.status_code} {response.text}"
                 )
+            if not response.content:
+                return {}
             return response.json()
-    raise DemoOrderError("Kalshi demo request failed after 429 retries")
+    raise DemoOrderError(f"Kalshi demo {method} {path} failed after retries: {last_error}")

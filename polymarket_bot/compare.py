@@ -99,6 +99,8 @@ class VenueGap:
     score: float
     buy_kalshi_sell_pm: Decimal
     buy_pm_sell_kalshi: Decimal
+    per_contract_buy_k_sell_p: Decimal
+    per_contract_buy_p_sell_k: Decimal
     kalshi_taker: Decimal
     pm_taker_buy: Decimal
     pm_taker_sell: Decimal
@@ -137,15 +139,18 @@ def compare_snapshots(
         if best is None:
             continue
         score, p = best
+        if k.stale or p.stale or not k.book_fetched or not p.book_fetched:
+            continue
         if k.best_ask is None or k.best_bid is None or p.best_ask is None or p.best_bid is None:
             continue
-        k_taker_buy = venue_taker_fee(size, k.best_ask, venue="kalshi", fee_type=k.fee_type, multiplier=k.fee_multiplier)
-        k_taker_sell = venue_taker_fee(size, k.best_bid, venue="kalshi", fee_type=k.fee_type, multiplier=k.fee_multiplier)
-        pm_taker_buy = venue_taker_fee(size, p.best_ask, venue="polymarket_us", theta=p.fee_coefficient)
-        pm_taker_sell = venue_taker_fee(size, p.best_bid, venue="polymarket_us", theta=p.fee_coefficient)
-        # Net $ for buying `size` contracts on A (at ask) and selling on B (at bid)
-        buy_k_sell_p = (p.best_bid - k.best_ask) * size - k_taker_buy - pm_taker_sell
-        buy_p_sell_k = (k.best_bid - p.best_ask) * size - pm_taker_buy - k_taker_sell
+        clip = size if size > 0 else Decimal("1")
+        k_taker_buy = venue_taker_fee(clip, k.best_ask, venue="kalshi", fee_type=k.fee_type, multiplier=k.fee_multiplier)
+        k_taker_sell = venue_taker_fee(clip, k.best_bid, venue="kalshi", fee_type=k.fee_type, multiplier=k.fee_multiplier)
+        pm_taker_buy = venue_taker_fee(clip, p.best_ask, venue="polymarket_us", theta=p.fee_coefficient)
+        pm_taker_sell = venue_taker_fee(clip, p.best_bid, venue="polymarket_us", theta=p.fee_coefficient)
+        # Dollar total on `clip` contracts, then per-contract net after taker fees.
+        buy_k_sell_p = (p.best_bid - k.best_ask) * clip - k_taker_buy - pm_taker_sell
+        buy_p_sell_k = (k.best_bid - p.best_ask) * clip - pm_taker_buy - k_taker_sell
         out.append(
             VenueGap(
                 kalshi=k,
@@ -153,6 +158,8 @@ def compare_snapshots(
                 score=score,
                 buy_kalshi_sell_pm=buy_k_sell_p,
                 buy_pm_sell_kalshi=buy_p_sell_k,
+                per_contract_buy_k_sell_p=buy_k_sell_p / clip,
+                per_contract_buy_p_sell_k=buy_p_sell_k / clip,
                 kalshi_taker=k_taker_buy,
                 pm_taker_buy=pm_taker_buy,
                 pm_taker_sell=pm_taker_sell,
@@ -196,8 +203,11 @@ def collect_snapshots(client, config: AppConfig, *, now: datetime | None = None)
         try:
             book = client.book(slug)
         except Exception:
-            book = None
+            # Do not fall back to list prices — those are stale for trading/alerts.
+            continue
         snap = _snapshot(client, market, book, now, config)
+        if snap.stale or not snap.book_fetched:
+            continue
         if snap.best_bid is None or snap.best_ask is None:
             continue
         rows.append(snap)
@@ -209,6 +219,8 @@ def format_compare_report(gaps: list[VenueGap], config: AppConfig) -> str:
         "Cross-venue comparison (Kalshi vs Polymarket US)",
         "READ-ONLY — alerts only, no orders are sent on either venue",
         f"Taker fees applied on {config.compare.contract_size} contracts per side.",
+        "min_net_edge is dollars PER CONTRACT after taker fees "
+        f"(threshold {config.compare.min_net_edge} $/contract), not a clip total.",
         "",
     ]
     if not gaps:
@@ -216,13 +228,13 @@ def format_compare_report(gaps: list[VenueGap], config: AppConfig) -> str:
         return "\n".join(lines) + "\n"
     alerts = 0
     for gap in gaps:
-        edge = max(gap.buy_kalshi_sell_pm, gap.buy_pm_sell_kalshi)
+        edge = max(gap.per_contract_buy_k_sell_p, gap.per_contract_buy_p_sell_k)
         flag = " ALERT" if edge >= config.compare.min_net_edge else ""
         if flag:
             alerts += 1
         direction = (
             "buy Kalshi / sell Polymarket"
-            if gap.buy_kalshi_sell_pm >= gap.buy_pm_sell_kalshi
+            if gap.per_contract_buy_k_sell_p >= gap.per_contract_buy_p_sell_k
             else "buy Polymarket / sell Kalshi"
         )
         lines.append(
@@ -235,10 +247,18 @@ def format_compare_report(gaps: list[VenueGap], config: AppConfig) -> str:
             f"PM {gap.polymarket.best_bid}/{gap.polymarket.best_ask}"
         )
         lines.append(
-            f"  Net after taker fees: buyK-sellPM {gap.buy_kalshi_sell_pm:.2f}  "
-            f"buyPM-sellK {gap.buy_pm_sell_kalshi:.2f}  ({direction})"
+            f"  Net $/contract: buyK-sellPM {gap.per_contract_buy_k_sell_p:.4f}  "
+            f"buyPM-sellK {gap.per_contract_buy_p_sell_k:.4f}  ({direction})"
+        )
+        lines.append(
+            f"  Net on {config.compare.contract_size} contracts: "
+            f"buyK-sellPM {gap.buy_kalshi_sell_pm:.2f}  "
+            f"buyPM-sellK {gap.buy_pm_sell_kalshi:.2f}"
         )
         lines.append("")
-    lines.append(f"{len(gaps)} matched markets, {alerts} above alert threshold {config.compare.min_net_edge}.")
+    lines.append(
+        f"{len(gaps)} matched markets, {alerts} above per-contract alert "
+        f"threshold {config.compare.min_net_edge} $/contract."
+    )
     lines.append("These gaps are not executable here (non-atomic, different rules, demo vs live books).")
     return "\n".join(lines) + "\n"

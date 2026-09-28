@@ -78,3 +78,10 @@ def test_new_trade_through_fills_ask():
     prev = _snap("0.50", "0.49", "0.51")
     cur = _snap("0.54", "0.53", "0.55")
     assert fill_reason(_ask(), cur, prev) == "trade_through"
+
+
+def test_stale_snapshot_never_fills():
+    prev = _snap("0.50", "0.49", "0.51")
+    cur = _snap("0.47", "0.46", "0.50")
+    cur.stale = True
+    assert fill_reason(_bid(), cur, prev) is None

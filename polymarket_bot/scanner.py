@@ -1,4 +1,4 @@
-"""Read-only scanner over public Polymarket US markets."""
+"""Read-only scanner over public Kalshi / Polymarket US markets."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from decimal import Decimal
 
 from polymarket_bot.config import AppConfig, ScannerConfig
 from polymarket_bot.market_data import MarketDataClient, MarketSnapshot
+from polymarket_bot.market_data.errors import BookFetchError
 from polymarket_bot.market_data.normalize import snapshot_from_payloads
 
 
@@ -22,7 +23,17 @@ def _snapshot(client: MarketDataClient, market: dict, book, now, config: AppConf
     )
 
 
+def liquidity_score(snap: MarketSnapshot) -> Decimal:
+    volume = snap.volume_shares or Decimal("0")
+    oi = snap.open_interest or Decimal("0")
+    liq = snap.notional_traded or Decimal("0")
+    depth = (snap.bid_depth_contracts or Decimal("0")) + (snap.ask_depth_contracts or Decimal("0"))
+    return volume * Decimal("10") + oi + liq + depth
+
+
 def is_liquid(snap: MarketSnapshot, cfg: ScannerConfig) -> bool:
+    if snap.stale or not snap.book_fetched:
+        return False
     if snap.best_bid is None or snap.best_ask is None or snap.spread is None:
         return False
     if snap.spread > cfg.max_spread:
@@ -32,7 +43,8 @@ def is_liquid(snap: MarketSnapshot, cfg: ScannerConfig) -> bool:
     if snap.ask_depth_contracts < cfg.min_ask_depth_contracts:
         return False
     volume = snap.volume_shares or Decimal("0")
-    if volume < cfg.min_volume_shares:
+    # Kalshi list volume is often 0; accept depth/OI as a substitute.
+    if volume < cfg.min_volume_shares and liquidity_score(snap) <= 0:
         return False
     hours = snap.hours_to_resolution
     if hours is None or hours < cfg.min_hours_to_resolution:
@@ -43,22 +55,19 @@ def is_liquid(snap: MarketSnapshot, cfg: ScannerConfig) -> bool:
     return True
 
 
-def scan_markets(
-    client: MarketDataClient,
-    config: AppConfig,
-    *,
-    now: datetime | None = None,
-) -> list[MarketSnapshot]:
-    now = now or datetime.now(timezone.utc)
+def _list_raw(client: MarketDataClient, config: AppConfig) -> list[dict]:
     cfg = config.scanner
-    listed = client.list_markets(
+    return client.list_markets(
         limit=cfg.max_markets_to_list,
         active=cfg.active_only,
         closed=cfg.include_closed,
         offset=0,
     )
 
-    ranked: list[tuple[Decimal, dict]] = []
+
+def _rank_for_books(client, listed, now, config) -> list[dict]:
+    cfg = config.scanner
+    ranked: list[tuple[Decimal, Decimal, dict]] = []
     for market in listed:
         snap = _snapshot(client, market, None, now, config)
         if snap.best_bid is None or snap.best_ask is None or snap.spread is None:
@@ -68,22 +77,83 @@ def scan_markets(
         hours = snap.hours_to_resolution
         if hours is not None and hours < cfg.min_hours_to_resolution:
             continue
-        ranked.append((snap.spread, market))
+        ranked.append((-liquidity_score(snap), snap.spread, market))
+    ranked.sort()
+    return [market for _, _, market in ranked[: cfg.max_book_fetches]]
 
-    ranked.sort(key=lambda row: row[0])
+
+def _fetch_books(client, markets, now, config) -> list[MarketSnapshot]:
     snapshots: list[MarketSnapshot] = []
-    for _, market in ranked[: cfg.max_book_fetches]:
+    for market in markets:
         slug = market.get("slug") or market.get("ticker")
         try:
             book = client.book(slug)
-        except Exception:
+        except (BookFetchError, Exception):
             continue
         snap = _snapshot(client, market, book, now, config)
+        snap.stale = False
+        snap.book_fetched = True
         snapshots.append(snap)
+    return snapshots
 
-    liquid = [s for s in snapshots if is_liquid(s, cfg)]
-    liquid.sort(key=lambda s: (s.spread or Decimal("1"), -(s.volume_shares or 0)))
-    return liquid[: cfg.top_n]
+
+def scan_markets(
+    client: MarketDataClient,
+    config: AppConfig,
+    *,
+    now: datetime | None = None,
+) -> list[MarketSnapshot]:
+    now = now or datetime.now(timezone.utc)
+    listed = _list_raw(client, config)
+    picked = _rank_for_books(client, listed, now, config)
+    snapshots = _fetch_books(client, picked, now, config)
+    liquid = [s for s in snapshots if is_liquid(s, config.scanner)]
+    liquid.sort(key=lambda s: (-liquidity_score(s), s.spread or Decimal("1")))
+    return liquid[: config.scanner.top_n]
+
+
+def scan_near_resolution(
+    client: MarketDataClient,
+    config: AppConfig,
+    *,
+    now: datetime | None = None,
+) -> list[MarketSnapshot]:
+    """Own universe: close-to-event favorites, not the far-dated maker book."""
+    now = now or datetime.now(timezone.utc)
+    near = config.paper.near_resolution
+    if not near.enabled:
+        return []
+    listed = _list_raw(client, config)
+    candidates: list[tuple[Decimal, dict]] = []
+    for market in listed:
+        snap = _snapshot(client, market, None, now, config)
+        hours = snap.hours_to_resolution
+        if hours is None:
+            continue
+        if hours > near.max_hours_to_resolution or hours < near.min_hours_to_resolution:
+            continue
+        if snap.mid is None or snap.mid < near.min_price or snap.mid > near.max_price:
+            continue
+        if snap.spread is not None and snap.spread > config.scanner.max_spread:
+            continue
+        candidates.append((-liquidity_score(snap), market))
+    candidates.sort()
+    picked = [market for _, market in candidates[: config.scanner.max_book_fetches]]
+    snapshots = _fetch_books(client, picked, now, config)
+    kept = []
+    for snap in snapshots:
+        if snap.stale or not snap.book_fetched:
+            continue
+        hours = snap.hours_to_resolution
+        if hours is None:
+            continue
+        if hours > near.max_hours_to_resolution or hours < near.min_hours_to_resolution:
+            continue
+        if snap.mid is None or snap.mid < near.min_price or snap.mid > near.max_price:
+            continue
+        kept.append(snap)
+    kept.sort(key=lambda s: (s.hours_to_resolution or 99, -(s.mid or 0)))
+    return kept[: config.paper.max_markets]
 
 
 def format_scan_table(rows: list[MarketSnapshot]) -> str:
@@ -100,8 +170,9 @@ def format_scan_table(rows: list[MarketSnapshot]) -> str:
         hrs = f"{s.hours_to_resolution:.1f}" if s.hours_to_resolution is not None else "-"
         vol = f"{s.volume_shares:.0f}" if s.volume_shares is not None else "-"
         q = (s.question or "")[:48]
+        stale = " [STALE]" if s.stale else ""
         lines.append(
             f"{s.venue:<14} {s.slug:<42} {mid:>7} {sprd:>7} {s.bid_depth_contracts:>10.0f} "
-            f"{s.ask_depth_contracts:>10.0f} {vol:>10} {hrs:>8} {q}"
+            f"{s.ask_depth_contracts:>10.0f} {vol:>10} {hrs:>8} {q}{stale}"
         )
     return "\n".join(lines)

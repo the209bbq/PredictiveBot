@@ -10,12 +10,13 @@ from typing import Any
 from polymarket_bot.config import AppConfig
 from polymarket_bot.logging_utils import DecisionLogger
 from polymarket_bot.market_data import MarketDataClient, MarketSnapshot
+from polymarket_bot.market_data.errors import BookFetchError
 from polymarket_bot.market_data.replay_client import ReplayClient
 from polymarket_bot.paper import maker, near_resolution
 from polymarket_bot.paper.fills import fill_reason
 from polymarket_bot.paper.portfolio import PaperOrder, Portfolio
 from polymarket_bot.paper.risk import check_daily_loss, past_resolution_cutoff, price_jumped
-from polymarket_bot.scanner import scan_markets
+from polymarket_bot.scanner import scan_markets, scan_near_resolution
 
 
 def _mids(snaps: dict[str, MarketSnapshot]) -> dict[str, Decimal | None]:
@@ -26,6 +27,64 @@ def _cancel_all(orders: list[PaperOrder], logger: DecisionLogger, reason: str, s
     for order in orders:
         logger.log("cancel", strategy=strategy, market=order.market, side=order.side, reason=reason, live=False)
     return []
+
+
+def _mark_stale(snap: MarketSnapshot) -> MarketSnapshot:
+    snap.stale = True
+    snap.book_fetched = False
+    return snap
+
+
+def _refresh_live(
+    client: MarketDataClient,
+    snap: MarketSnapshot,
+    logger: DecisionLogger,
+    now: datetime,
+) -> MarketSnapshot:
+    """Fetch a fresh book (and last trade). Never reuse a failed book as live data."""
+    try:
+        book = client.book(snap.slug)
+    except (BookFetchError, Exception) as exc:
+        logger.log("book_error", market=snap.slug, error=str(exc), stale=True, live=False)
+        return _mark_stale(snap)
+
+    market = snap.raw.get("market") or {
+        "slug": snap.slug,
+        "ticker": snap.slug,
+        "question": snap.question,
+    }
+    refreshed = client.snapshot(market, book, now=now)
+    getter = getattr(client, "last_trade", None)
+    if callable(getter):
+        try:
+            last = getter(snap.slug)
+            if last is not None:
+                refreshed.last_trade = last
+        except (BookFetchError, Exception) as exc:
+            logger.log("last_trade_error", market=snap.slug, error=str(exc), live=False)
+    refreshed.stale = False
+    refreshed.book_fetched = True
+    return refreshed
+
+
+def _choose_markets(
+    client: MarketDataClient,
+    config: AppConfig,
+    now: datetime,
+    markets: list[MarketSnapshot] | None,
+) -> list[MarketSnapshot]:
+    if markets is not None:
+        return list(markets)
+    maker_picks = scan_markets(client, config, now=now)[: config.paper.max_markets]
+    near_picks = scan_near_resolution(client, config, now=now)
+    seen: set[str] = set()
+    chosen: list[MarketSnapshot] = []
+    for snap in maker_picks + near_picks:
+        if snap.slug in seen:
+            continue
+        seen.add(snap.slug)
+        chosen.append(snap)
+    return chosen
 
 
 def run_paper(
@@ -46,9 +105,7 @@ def run_paper(
     near_port = Portfolio("near_resolution", config.paper.starting_cash, config.paper.starting_cash)
     prev: dict[str, MarketSnapshot] = {}
 
-    if markets is None:
-        markets = scan_markets(client, config, now=now)
-    chosen = markets[: config.paper.max_markets]
+    chosen = _choose_markets(client, config, now, markets)
     logger.log(
         "paper_start",
         source=client.source_name,
@@ -62,25 +119,21 @@ def run_paper(
 
     for tick in range(n_ticks):
         snaps: dict[str, MarketSnapshot] = {}
-        universe = chosen
+        universe: list[MarketSnapshot]
         if is_replay:
             listed = client.list_markets(limit=config.scanner.max_markets_to_list, active=True, closed=False)
             universe = []
             for market in listed:
                 slug = market.get("slug") or market.get("ticker")
-                universe.append(client.snapshot(market, client.book(slug), now=now))
+                snap = client.snapshot(market, client.book(slug), now=now)
+                snap.stale = False
+                snap.book_fetched = True
+                universe.append(snap)
         else:
-            refreshed: list[MarketSnapshot] = []
-            for snap in chosen:
-                try:
-                    book = client.book(snap.slug)
-                    market = snap.raw.get("market") or {"slug": snap.slug, "question": snap.question}
-                    refreshed.append(client.snapshot(market, book, now=datetime.now(timezone.utc)))
-                except Exception as exc:
-                    logger.log("book_error", market=snap.slug, error=str(exc), live=False)
-                    refreshed.append(snap)
-            universe = refreshed
-            chosen = refreshed
+            universe = [
+                _refresh_live(client, snap, logger, datetime.now(timezone.utc)) for snap in chosen
+            ]
+            chosen = universe
 
         for snap in universe:
             snaps[snap.slug] = snap
@@ -107,6 +160,15 @@ def run_paper(
                 snap = snaps.get(order.market)
                 if snap is None:
                     remaining.append(order)
+                    continue
+                if snap.stale or not snap.book_fetched:
+                    logger.log(
+                        "cancel",
+                        strategy=order.strategy,
+                        market=order.market,
+                        reason="stale_book",
+                        live=False,
+                    )
                     continue
                 if price_jumped(prev.get(order.market), snap, config.paper.risk.cancel_on_price_jump):
                     logger.log(

@@ -40,7 +40,10 @@ class DecisionLogger:
         self._fh.write(json.dumps(record, default=json_default) + "\n")
         self._fh.flush()
         summary = {k: record[k] for k in list(record)[:8]}
-        self._log.info("%s %s", action, summary)
+        if str(action).startswith("ALERT") or fields.get("alert"):
+            self._log.error("%s %s", action, summary)
+        else:
+            self._log.info("%s %s", action, summary)
         return record
 
     def close(self) -> None:

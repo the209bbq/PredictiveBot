@@ -9,6 +9,7 @@ from polymarket_us import PolymarketUS
 
 from polymarket_bot.config import AppConfig
 from polymarket_bot.guard import refuse_live_call
+from polymarket_bot.market_data.errors import BookFetchError
 
 
 class _DisabledTrading:
@@ -67,8 +68,21 @@ class SdkPublicClient:
         return list(payload.get("markets") or [])
 
     def book(self, slug: str) -> dict[str, Any]:
-        self._pace()
-        return dict(self._sdk.markets.book(slug))
+        delay = 0.5
+        last_exc: Exception | None = None
+        for _ in range(max(1, 4)):
+            self._pace()
+            try:
+                return dict(self._sdk.markets.book(slug))
+            except Exception as exc:
+                last_exc = exc
+                text = str(exc).lower()
+                retryable = "429" in text or "503" in text or "502" in text or "500" in text or "timeout" in text
+                if not retryable:
+                    raise BookFetchError(f"Polymarket US book {slug} failed: {exc}") from exc
+                time.sleep(delay)
+                delay = min(delay * 2, 8)
+        raise BookFetchError(f"Polymarket US book {slug} failed after retries: {last_exc}")
 
     def bbo(self, slug: str) -> dict[str, Any]:
         self._pace()

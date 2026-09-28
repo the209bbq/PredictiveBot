@@ -49,6 +49,20 @@ class FixtureClient:
             return item["book"]
         return {"marketData": item.get("marketData") or item}
 
+    def last_trade(self, slug: str):
+        from polymarket_bot.market_data import as_decimal
+
+        item = self._by_slug[slug]
+        market = item.get("market") or item
+        book = item.get("book") or {}
+        md = book.get("marketData") or {}
+        stats = md.get("stats") or {}
+        return (
+            as_decimal(market.get("last_price_dollars"))
+            or as_decimal(stats.get("lastTradePx"))
+            or as_decimal(market.get("lastTradePrice"))
+        )
+
     def bbo(self, slug: str) -> dict[str, Any]:
         item = self._by_slug[slug]
         if "bbo" in item:

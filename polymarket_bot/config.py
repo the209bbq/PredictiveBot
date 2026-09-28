@@ -36,6 +36,8 @@ class ScannerConfig:
     active_only: bool
     include_closed: bool
     max_markets_to_list: int
+    list_page_size: int
+    max_list_pages: int
     max_book_fetches: int
     min_volume_shares: Decimal
     min_bid_depth_contracts: Decimal
@@ -50,6 +52,7 @@ class MakerConfig:
     enabled: bool
     half_spread: Decimal
     inventory_skew_per_contract: Decimal
+    improve_ticks: int
 
 
 @dataclass(frozen=True)
@@ -161,8 +164,8 @@ def load_config(path: str | Path | None = None) -> AppConfig:
             gateway_base_url=str(api_raw.get("gateway_base_url", "https://gateway.polymarket.us")),
             api_base_url=str(api_raw.get("api_base_url", "https://api.polymarket.us")),
             request_timeout_seconds=float(api_raw.get("request_timeout_seconds", 30)),
-            max_retries=int(api_raw.get("max_retries", 2)),
-            min_request_interval_seconds=float(api_raw.get("min_request_interval_seconds", 0.12)),
+            max_retries=int(api_raw.get("max_retries", 4)),
+            min_request_interval_seconds=float(api_raw.get("min_request_interval_seconds", 0.35)),
         ),
         kalshi=KalshiConfig(
             market_data_base_url=str(
@@ -178,8 +181,10 @@ def load_config(path: str | Path | None = None) -> AppConfig:
         scanner=ScannerConfig(
             active_only=bool(scan_raw.get("active_only", True)),
             include_closed=bool(scan_raw.get("include_closed", False)),
-            max_markets_to_list=int(scan_raw.get("max_markets_to_list", 40)),
-            max_book_fetches=int(scan_raw.get("max_book_fetches", 20)),
+            max_markets_to_list=int(scan_raw.get("max_markets_to_list", 800)),
+            list_page_size=int(scan_raw.get("list_page_size", 200)),
+            max_list_pages=int(scan_raw.get("max_list_pages", 6)),
+            max_book_fetches=int(scan_raw.get("max_book_fetches", 10)),
             min_volume_shares=_dec(scan_raw.get("min_volume_shares"), "1000"),
             min_bid_depth_contracts=_dec(scan_raw.get("min_bid_depth_contracts"), "25"),
             min_ask_depth_contracts=_dec(scan_raw.get("min_ask_depth_contracts"), "25"),
@@ -198,6 +203,7 @@ def load_config(path: str | Path | None = None) -> AppConfig:
                 enabled=bool(maker_raw.get("enabled", True)),
                 half_spread=_dec(maker_raw.get("half_spread"), "0.02"),
                 inventory_skew_per_contract=_dec(maker_raw.get("inventory_skew_per_contract"), "0.0004"),
+                improve_ticks=int(maker_raw.get("improve_ticks", 1)),
             ),
             near_resolution=NearResolutionConfig(
                 enabled=bool(near_raw.get("enabled", True)),

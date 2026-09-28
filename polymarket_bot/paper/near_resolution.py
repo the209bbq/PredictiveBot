@@ -20,6 +20,8 @@ def desired_quotes(
     near = config.paper.near_resolution
     if not near.enabled:
         return []
+    if snap.stale or not snap.book_fetched:
+        return []
     if snap.mid is None or snap.best_bid is None or snap.best_ask is None:
         return []
     hours = snap.hours_to_resolution
