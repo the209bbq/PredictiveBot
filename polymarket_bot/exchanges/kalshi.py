@@ -2,18 +2,20 @@
 
 from __future__ import annotations
 
-import os
 import time
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
-from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
 import httpx
 
 from polymarket_bot.config import AppConfig
+from polymarket_bot.exchanges.kalshi_auth import (
+    access_headers,
+    load_demo_credentials,
+    signing_path,
+)
 from polymarket_bot.guard import (
     DemoOrderError,
     assert_kalshi_demo_orders_allowed,
@@ -214,21 +216,13 @@ class KalshiClient:
         )
         if is_kalshi_production_url(self.demo_base_url):
             refuse_live_call("kalshi_production_order")
-        key_id = os.environ.get("KALSHI_DEMO_API_KEY_ID") or ""
-        pem = os.environ.get("KALSHI_DEMO_PRIVATE_KEY") or ""
-        key_path = os.environ.get("KALSHI_DEMO_PRIVATE_KEY_PATH") or ""
-        if not pem and key_path:
-            pem = Path(key_path).read_text()
-        if not key_id or not pem:
-            raise DemoOrderError(
-                "Kalshi demo keys missing. Set KALSHI_DEMO_API_KEY_ID and "
-                "KALSHI_DEMO_PRIVATE_KEY_PATH or KALSHI_DEMO_PRIVATE_KEY."
-            )
-        return _signed_post(
+        key_id, private_key = load_demo_credentials()
+        return _signed_request(
             base_url=self.demo_base_url,
+            method="POST",
             path="/portfolio/events/orders",
             key_id=key_id,
-            pem=pem,
+            private_key=private_key,
             body={
                 "ticker": ticker,
                 "side": side,
@@ -245,43 +239,43 @@ class KalshiClient:
         self._http.close()
 
 
-def _signed_post(*, base_url: str, path: str, key_id: str, pem: str, body: dict[str, Any]) -> dict[str, Any]:
-    from cryptography.hazmat.backends import default_backend
-    from cryptography.hazmat.primitives import hashes, serialization
-    from cryptography.hazmat.primitives.asymmetric import padding
-    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-    import base64
-
-    private_key = serialization.load_pem_private_key(
-        pem.encode(), password=None, backend=default_backend()
-    )
+def _signed_request(
+    *,
+    base_url: str,
+    method: str,
+    path: str,
+    key_id: str,
+    private_key: Any,
+    body: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     timestamp = str(int(datetime.now(timezone.utc).timestamp() * 1000))
-    sign_path = urlparse(base_url + path).path.split("?")[0]
-    message = f"{timestamp}POST{sign_path}".encode()
-    if isinstance(private_key, Ed25519PrivateKey):
-        signature = private_key.sign(message)
-    else:
-        signature = private_key.sign(
-            message,
-            padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.DIGEST_LENGTH),
-            hashes.SHA256(),
-        )
-    headers = {
-        "KALSHI-ACCESS-KEY": key_id,
-        "KALSHI-ACCESS-SIGNATURE": base64.b64encode(signature).decode(),
-        "KALSHI-ACCESS-TIMESTAMP": timestamp,
-        "Content-Type": "application/json",
-        "User-Agent": "PredictiveBot/0.2 (kalshi-demo)",
-    }
+    sign_path = signing_path(base_url, path)
+    headers = access_headers(
+        key_id=key_id,
+        private_key=private_key,
+        method=method,
+        sign_path=sign_path,
+        timestamp=timestamp,
+    )
+    headers["User-Agent"] = "PredictiveBot/0.2 (kalshi-demo)"
+    if body is not None:
+        headers["Content-Type"] = "application/json"
     delay = 0.25
     with httpx.Client(timeout=30.0) as client:
         for _ in range(4):
-            response = client.post(base_url + path, headers=headers, json=body)
+            response = client.request(
+                method,
+                base_url.rstrip("/") + "/" + path.lstrip("/"),
+                headers=headers,
+                json=body,
+            )
             if response.status_code == 429:
                 time.sleep(delay)
                 delay = min(delay * 2, 8)
                 continue
             if response.status_code >= 400:
-                raise DemoOrderError(f"Kalshi demo order failed: {response.status_code} {response.text}")
+                raise DemoOrderError(
+                    f"Kalshi demo {method} {path} failed: {response.status_code} {response.text}"
+                )
             return response.json()
-    raise DemoOrderError("Kalshi demo order failed after 429 retries")
+    raise DemoOrderError("Kalshi demo request failed after 429 retries")

@@ -17,7 +17,7 @@ _LIVE_MESSAGE = (
     "Production trading is disabled. This bot never places, cancels, or modifies "
     "real orders on Polymarket US or Kalshi production. Keep dry_run: true and "
     "live_trading_enabled: false. Kalshi DEMO orders are a separate opt-in path "
-    "that only talks to https://external-api.demo.kalshi.co/trade-api/v2."
+    "that only talks to https://demo-api.kalshi.co/trade-api/v2."
 )
 
 KALSHI_PRODUCTION_HOSTS = {
@@ -69,7 +69,8 @@ def assert_kalshi_demo_orders_allowed(*, enabled: bool, base_url: str) -> None:
     if is_kalshi_production_url(base_url):
         raise DemoOrderError(
             f"Refusing to send orders: {base_url} looks like Kalshi production. "
-            "Demo orders must use https://external-api.demo.kalshi.co/trade-api/v2."
+            "Demo orders must use https://demo-api.kalshi.co/trade-api/v2 "
+            "(or the documented fallback https://external-api.demo.kalshi.co/trade-api/v2)."
         )
     if not is_kalshi_demo_url(base_url):
         raise DemoOrderError(

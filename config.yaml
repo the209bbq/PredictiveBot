@@ -17,7 +17,8 @@ api:
 kalshi:
   # Public production market data (no keys). Orders are never sent here.
   market_data_base_url: https://external-api.kalshi.com/trade-api/v2
-  demo_base_url: https://external-api.demo.kalshi.co/trade-api/v2
+  # Working demo host. external-api.demo.kalshi.co is a documented fallback.
+  demo_base_url: https://demo-api.kalshi.co/trade-api/v2
   demo_orders_enabled: false
   # Basic tier: 200 read tokens/s, 10 tokens/GET => 20 GET/s. Stay below it.
   min_request_interval_seconds: 0.08

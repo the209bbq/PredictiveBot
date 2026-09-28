@@ -16,7 +16,7 @@ This is a personal research tool, not financial advice. Prediction-market tradin
 4. **Paper near-resolution favorites** — resting bids on ~94–98¢ contracts near expiry. Isolated book and P&L.
 5. **Risk** — per-market and gross caps, daily-loss kill switch, cancel on mid jump, resolution cutoff. All in `config.yaml`.
 6. **Cross-venue comparison** — read-only match of similar events on Kalshi and Polymarket US, with the price gap **after both venues' taker fees**. Alerts only; it never trades the gap.
-7. **Kalshi demo orders (opt-in)** — `pmbot kalshi-demo-order --confirm-demo` posts to `https://external-api.demo.kalshi.co/trade-api/v2` only. Production URLs are refused.
+7. **Kalshi demo orders (opt-in)** — `pmbot kalshi-demo-order --confirm-demo` posts to `https://demo-api.kalshi.co/trade-api/v2` only. Production URLs are refused. Signing auto-detects Ed25519 vs RSA.
 
 ## Setup
 
@@ -92,8 +92,8 @@ pytest
 
 - `dry_run: true`, `live_trading_enabled: false`.
 - `POLYMARKET_LIVE_TRADING` and `KALSHI_LIVE_TRADING` must stay false.
-- Kalshi demo orders require `kalshi.demo_orders_enabled: true`, `--confirm-demo`, and a demo host. `https://external-api.kalshi.com` / `https://api.elections.kalshi.com` are refused.
-- Demo keys: `KALSHI_DEMO_API_KEY_ID` plus `KALSHI_DEMO_PRIVATE_KEY_PATH` or `KALSHI_DEMO_PRIVATE_KEY`. Never committed.
+- Kalshi demo orders require `kalshi.demo_orders_enabled: true`, `--confirm-demo`, and a demo host (`https://demo-api.kalshi.co/trade-api/v2`; `external-api.demo.kalshi.co` is a documented fallback). Production hosts are refused.
+- Demo keys: `KALSHI_DEMO_API_KEY_ID` and `KALSHI_DEMO_PRIVATE_KEY` (PEM contents; Ed25519 PKCS#8 or RSA). `KALSHI_DEMO_PRIVATE_KEY_PATH` is optional. Collapsed/single-line PEMs are normalized before load. Never committed.
 - Paper quotes never leave the process. Polymarket US has no order path at all.
 
 ## Data sources (verified)
@@ -102,10 +102,10 @@ pytest
 
 | Item | What we found |
 | --- | --- |
-| REST | Trade API v2. Recommended prod `https://external-api.kalshi.com/trade-api/v2`; demo `https://external-api.demo.kalshi.co/trade-api/v2`. |
+| REST | Trade API v2. Prod public data `https://external-api.kalshi.com/trade-api/v2`. Demo default `https://demo-api.kalshi.co/trade-api/v2` (documented fallback: `https://external-api.demo.kalshi.co/trade-api/v2`). |
 | Public data | Markets, order books, events, series, `GET /exchange/schedule` — no auth. Confirmed 200 in this environment. |
 | Order book | YES bids and NO bids only. A NO bid at `p` is a YES ask at `1−p`. |
-| Auth | `KALSHI-ACCESS-KEY` / `TIMESTAMP` / `SIGNATURE`. RSA-PSS SHA-256 or Ed25519 over `timestamp + METHOD + path` (no query string). Used only for demo orders. |
+| Auth | `KALSHI-ACCESS-KEY` / `TIMESTAMP` / `SIGNATURE`. Auto-detects Ed25519 (sign the pre-sign text directly) vs RSA-PSS SHA-256. Path includes `/trade-api/v2` and excludes the query string. Official SDKs are RSA-only. |
 | Demo orders | `POST /portfolio/events/orders` (Create Order V2). |
 | Rate limits | Token buckets. Basic: 200 read / 100 write tokens per second; most calls cost 10 tokens. 429 body `{"error":"too many requests"}`, **no Retry-After**. Client uses exponential backoff. |
 | Fees | Taker `round_up(0.07 × C × P × (1−P))` to the cent. Maker $0 unless the series has maker fees. |

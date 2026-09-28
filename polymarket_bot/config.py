@@ -169,7 +169,7 @@ def load_config(path: str | Path | None = None) -> AppConfig:
                 kalshi_raw.get("market_data_base_url", "https://external-api.kalshi.com/trade-api/v2")
             ),
             demo_base_url=str(
-                kalshi_raw.get("demo_base_url", "https://external-api.demo.kalshi.co/trade-api/v2")
+                kalshi_raw.get("demo_base_url", "https://demo-api.kalshi.co/trade-api/v2")
             ),
             demo_orders_enabled=bool(kalshi_raw.get("demo_orders_enabled", False)),
             min_request_interval_seconds=float(kalshi_raw.get("min_request_interval_seconds", 0.08)),
