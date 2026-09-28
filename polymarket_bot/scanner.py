@@ -70,14 +70,10 @@ def scan_markets(
             book = client.book(slug)
         except Exception:
             continue
-        try:
-            bbo = client.bbo(slug)
-        except Exception:
-            bbo = None
         snap = snapshot_from_payloads(
             market,
             book,
-            bbo,
+            None,
             now=now,
             tick_size_fallback=config.paper.tick_size_fallback,
         )

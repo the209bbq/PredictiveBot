@@ -93,9 +93,9 @@ Verified against [docs.polymarket.us](https://docs.polymarket.us) (retail API, `
 | Authenticated REST | `https://api.polymarket.us` — Key ID + Ed25519 signature. Trading, portfolio, balances. Unused here. |
 | `GET https://api.polymarket.us/v1/markets` without keys | 401 `Missing required API key headers` (and some bot User-Agents are blocked). Do not confuse this host with the public gateway. |
 | Official SDK | `pip install polymarket-us`. `PolymarketUS()` with no keys talks to the gateway for `markets.list` / `book` / `bbo`. Confirmed working. |
-| List payload | Includes `bestBidQuote` / `bestAskQuote`, `endDate`, `feeCoefficient`, `status`. **`volume` and `liquidity` are often null** on the list endpoint. Volume and depth come from `/v1/markets/{slug}/bbo` (`sharesTraded`, `bidShares`, `askShares`) and `/book`. |
+| List payload | Includes `bestBidQuote` / `bestAskQuote`, `endDate`, `feeCoefficient`, `status`. **`volume` and `liquidity` are often null** on the list endpoint. Volume and visible depth come from `/v1/markets/{slug}/book` (`stats.sharesTraded` and the top book levels). |
 | WebSockets | `wss://api.polymarket.us/v1/ws/markets` **requires API key authentication**. Not used in this dry-run version; paper trading polls REST (or a fixture replay). |
-| Rate limit | 20 r/s per IP on public endpoints. Config paces requests (`min_request_interval_seconds`). |
+| Rate limit | Docs say 20 r/s per IP. This environment still saw `429` when pairing `/book` + `/bbo` per market. The bot fetches **book only**, paces requests (`min_request_interval_seconds`), and relies on the SDK's 429 backoff. |
 | Fees | Standard Θ taker 0.0695 / maker rebate 0.0125, banker's rounding, effective Sep 25, 2026. Upcoming table-tennis taker Θ `0.10` on Sep 30, 2026; per-market `feeCoefficient` is read when present. |
 
 Recorded fixtures in `fixtures/` exist so tests and demos do not depend on the network.

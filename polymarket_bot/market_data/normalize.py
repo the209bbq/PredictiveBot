@@ -27,8 +27,8 @@ def hours_to_resolution(end_date: datetime | None, now: datetime | None = None) 
     return (end_date - now).total_seconds() / 3600.0
 
 
-def depth_from_levels(levels: list[BookLevel]) -> Decimal:
-    return sum((lvl.qty for lvl in levels), Decimal("0"))
+def depth_from_levels(levels: list[BookLevel], top_n: int = 5) -> Decimal:
+    return sum((lvl.qty for lvl in levels[:top_n]), Decimal("0"))
 
 
 def snapshot_from_payloads(
@@ -62,12 +62,12 @@ def snapshot_from_payloads(
     oi = as_decimal(bb.get("openInterest")) or as_decimal(stats.get("openInterest"))
     notional = as_decimal(stats.get("notionalTraded"))
 
-    bid_depth = as_decimal(bb.get("bidShares")) or depth_from_levels(bids)
-    ask_depth = as_decimal(bb.get("askShares")) or depth_from_levels(asks)
-    if bid_depth is None:
-        bid_depth = Decimal("0")
-    if ask_depth is None:
-        ask_depth = Decimal("0")
+    bid_depth = depth_from_levels(bids)
+    ask_depth = depth_from_levels(asks)
+    if not bids:
+        bid_depth = as_decimal(bb.get("bidShares")) or Decimal("0")
+    if not asks:
+        ask_depth = as_decimal(bb.get("askShares")) or Decimal("0")
 
     mid = None
     spread = None

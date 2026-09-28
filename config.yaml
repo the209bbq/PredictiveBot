@@ -11,7 +11,7 @@ api:
   request_timeout_seconds: 30
   max_retries: 2
   # Public unauthenticated limit is 20 rps/IP. Stay well below it.
-  min_request_interval_seconds: 0.08
+  min_request_interval_seconds: 0.12
 
 scanner:
   active_only: true

@@ -72,7 +72,7 @@ def run_paper(
                 snap = snapshot_from_payloads(
                     market,
                     replay.book(slug),
-                    replay.bbo(slug),
+                    None,
                     now=now,
                     tick_size_fallback=config.paper.tick_size_fallback,
                 )
@@ -82,10 +82,6 @@ def run_paper(
             for snap in chosen:
                 try:
                     book = client.book(snap.slug)
-                    try:
-                        bbo = client.bbo(snap.slug)
-                    except Exception:
-                        bbo = None
                     refreshed.append(
                         snapshot_from_payloads(
                             snap.raw.get("market") or {"slug": snap.slug, "question": snap.question,
@@ -94,7 +90,7 @@ def run_paper(
                                                        "orderPriceMinTickSize": snap.tick_size,
                                                        "feeCoefficient": snap.fee_coefficient},
                             book,
-                            bbo,
+                            None,
                             now=datetime.now(timezone.utc),
                             tick_size_fallback=config.paper.tick_size_fallback,
                         )
