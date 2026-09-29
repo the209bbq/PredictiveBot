@@ -1,6 +1,10 @@
 """Maker-universe series allow/deny, event blackouts, and fee-flag skip.
 
 The allowlist feeds the maker gate. It does not replace the per-market risk score.
+
+The bot is price-based. It does not ingest social, political, or review-site
+feeds. If external data is added later, it must come from official statistical
+APIs only (NWS / EIA / BLS).
 """
 
 from __future__ import annotations
@@ -55,6 +59,27 @@ _SPORTS_DENY = ("GAME", "NFL", "NBA", "MLB", "NHL", "NCAA", "WNBA", "EPL")
 _MENTION = ("mention", "will say", "will x say", "say that")
 _ENTERTAIN = ("ranking", "box office", "oscar", "grammy", "emmy", "rotten tomatoes")
 _MAKER_FEE = ("quadratic_with_maker", "maker_fee")
+_DEFAULT_BRENT = {
+    "weekend_halt_start": "14:00",
+    "weekend_halt_end": "15:00",
+    "unwind_start": "12:00",
+    "friday_settle": "14:00",
+    "recurring_blackouts": [
+        {"name": "api_inventory", "weekday": "tue", "start": "13:00", "end": "14:30"},
+        {"name": "eia_weekly", "weekday": "wed", "start": "07:00", "end": "08:30"},
+    ],
+    "dated_blackouts": [
+        {
+            "name": "eia_weekly",
+            "at": "2026-10-15T09:00:00",
+            "minutes": 90,
+            "replaces": "eia_weekly",
+        },
+        {"name": "eia_steo", "at": "2026-10-06T09:00:00", "minutes": 90},
+        {"name": "opec_jmmc", "date": "2026-10-04", "all_day": True},
+    ],
+}
+_WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 
 
 def series_ticker(snap: MarketSnapshot) -> str:
@@ -172,8 +197,18 @@ def _has_maker_fees(snap: MarketSnapshot) -> bool:
     return any(tok in fee for tok in _MAKER_FEE)
 
 
+def _aware(now: datetime) -> datetime:
+    if now.tzinfo is None:
+        return now.replace(tzinfo=timezone.utc)
+    return now
+
+
+def _local_pt(now: datetime) -> datetime:
+    return _aware(now).astimezone(PT)
+
+
 def _in_blackout(now: datetime, at: datetime, minutes: int) -> bool:
-    delta = abs((now - at).total_seconds())
+    delta = abs((_aware(now) - _aware(at)).total_seconds())
     return delta <= minutes * 60
 
 
@@ -186,22 +221,22 @@ def event_blackout(snap: MarketSnapshot, config: AppConfig, now: datetime) -> bo
         {"name": "fomc", "at": "2026-10-28T18:00:00+00:00", "series": ["KXFED", "KXFEDDECISION"]},
     ]
     series = series_ticker(snap)
+    now = _aware(now)
     for event in events:
         raw_at = event.get("at")
         if not raw_at:
             continue
-        try:
-            when = datetime.fromisoformat(str(raw_at).replace("Z", "+00:00"))
-        except ValueError:
+        when = _parse_pt_datetime(raw_at)
+        if when is None:
             continue
-        if when.tzinfo is None:
-            when = when.replace(tzinfo=timezone.utc)
         if not _in_blackout(now, when, minutes):
             continue
         prefixes = [str(x).upper() for x in (event.get("series") or [])]
         if not prefixes or _starts_with_any(series, prefixes):
             return True
     if gas_blackout(snap, config, now):
+        return True
+    if brent_halt(snap, config, now):
         return True
     return False
 
@@ -218,6 +253,162 @@ def _in_hhmm_window(now_minutes: int, start: int, end: int) -> bool:
     return now_minutes >= start or now_minutes <= end
 
 
+def _parse_pt_datetime(raw: Any) -> datetime | None:
+    try:
+        when = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=PT)
+    return when
+
+
+def _weekday_index(value: Any) -> int | None:
+    token = str(value or "").strip().lower()[:3]
+    if token in _WEEKDAYS:
+        return _WEEKDAYS.index(token)
+    return None
+
+
+def is_brent(snap: MarketSnapshot) -> bool:
+    series = series_ticker(snap)
+    slug = (snap.slug or "").upper()
+    return series.startswith("KXBRENTW") or slug.startswith("KXBRENTW")
+
+
+def _brent_settings(config: AppConfig) -> dict[str, Any]:
+    extra = (config.extra.get("paper") or {}).get("series") or {}
+    raw = extra.get("brent") if isinstance(extra.get("brent"), dict) else {}
+    out = dict(_DEFAULT_BRENT)
+    out.update(raw)
+    if not raw.get("recurring_blackouts"):
+        out["recurring_blackouts"] = list(_DEFAULT_BRENT["recurring_blackouts"])
+    if not raw.get("dated_blackouts"):
+        out["dated_blackouts"] = list(_DEFAULT_BRENT["dated_blackouts"])
+    return out
+
+
+def _brent_weekend_halt(local: datetime, settings: dict[str, Any]) -> bool:
+    start = _hhmm_minutes(settings.get("weekend_halt_start"), "14:00")
+    end = _hhmm_minutes(settings.get("weekend_halt_end"), "15:00")
+    mins = local.hour * 60 + local.minute
+    wd = local.weekday()
+    if wd == 4:
+        return mins >= start
+    if wd == 5:
+        return True
+    if wd == 6:
+        return mins <= end
+    return False
+
+
+def _brent_unwind_window(local: datetime, settings: dict[str, Any]) -> bool:
+    if local.weekday() != 4:
+        return False
+    start = _hhmm_minutes(settings.get("unwind_start"), "12:00")
+    settle = _hhmm_minutes(settings.get("friday_settle"), "14:00")
+    mins = local.hour * 60 + local.minute
+    return start <= mins < settle
+
+
+def _iso_week(day) -> tuple[int, int]:
+    cal = day.isocalendar()
+    return (int(cal[0]), int(cal[1]))
+
+
+def _dated_replaces_this_week(local: datetime, settings: dict[str, Any]) -> set[str]:
+    skipped: set[str] = set()
+    local_week = _iso_week(local.date())
+    for event in settings.get("dated_blackouts") or []:
+        replaces = str(event.get("replaces") or "").strip().lower()
+        if not replaces:
+            continue
+        when = None
+        if event.get("at"):
+            when = _parse_pt_datetime(event.get("at"))
+        elif event.get("date"):
+            try:
+                when = datetime.fromisoformat(str(event.get("date"))).replace(tzinfo=PT)
+            except ValueError:
+                when = None
+        if when is None:
+            continue
+        if _iso_week(when.astimezone(PT).date()) == local_week:
+            skipped.add(replaces)
+    return skipped
+
+
+def _brent_recurring_halt(local: datetime, settings: dict[str, Any]) -> bool:
+    mins = local.hour * 60 + local.minute
+    skipped = _dated_replaces_this_week(local, settings)
+    for event in settings.get("recurring_blackouts") or []:
+        name = str(event.get("name") or "").strip().lower()
+        if name and name in skipped:
+            continue
+        wd = _weekday_index(event.get("weekday"))
+        if wd is None or local.weekday() != wd:
+            continue
+        start = _hhmm_minutes(event.get("start"), "00:00")
+        end = _hhmm_minutes(event.get("end"), "00:00")
+        if _in_hhmm_window(mins, start, end):
+            return True
+    return False
+
+
+def _brent_dated_halt(local: datetime, settings: dict[str, Any]) -> bool:
+    local_date = local.date()
+    for event in settings.get("dated_blackouts") or []:
+        if event.get("all_day") or (event.get("date") and not event.get("at")):
+            raw = event.get("date") or (str(event.get("at") or "")[:10])
+            try:
+                day = datetime.fromisoformat(str(raw)[:10]).date()
+            except ValueError:
+                continue
+            if day == local_date:
+                return True
+            continue
+        when = _parse_pt_datetime(event.get("at"))
+        if when is None:
+            continue
+        minutes = int(event.get("minutes") or 90)
+        start = when.astimezone(PT)
+        end = start + timedelta(minutes=minutes)
+        if start <= local <= end:
+            return True
+    return False
+
+
+def brent_halt(snap: MarketSnapshot, config: AppConfig, now: datetime) -> bool:
+    """True when KXBRENTW must not open or keep resting quotes."""
+    if not is_brent(snap):
+        return False
+    settings = _brent_settings(config)
+    local = _local_pt(now)
+    if _brent_weekend_halt(local, settings):
+        return True
+    if _brent_recurring_halt(local, settings):
+        return True
+    if _brent_dated_halt(local, settings):
+        return True
+    return False
+
+
+def brent_unwind_only(snap: MarketSnapshot, config: AppConfig, now: datetime) -> bool:
+    """Friday final two hours before 2:00 PM PT settlement — reduce only."""
+    if not is_brent(snap) or brent_halt(snap, config, now):
+        return False
+    return _brent_unwind_window(_local_pt(now), _brent_settings(config))
+
+
+def quote_mode(snap: MarketSnapshot, config: AppConfig, now: datetime) -> str:
+    """halt | unwind | ok for the current maker quote."""
+    if event_blackout(snap, config, now):
+        return "halt"
+    if brent_unwind_only(snap, config, now):
+        return "unwind"
+    return "ok"
+
+
 def gas_blackout(snap: MarketSnapshot, config: AppConfig, now: datetime) -> bool:
     """AAA gasoline: evening pre-close on daily, morning window for anything still open."""
     series = series_ticker(snap)
@@ -225,7 +416,7 @@ def gas_blackout(snap: MarketSnapshot, config: AppConfig, now: datetime) -> bool
     if not (series.startswith("KXAAA") or slug.startswith("KXAAA")):
         return False
     extra = (config.extra.get("paper") or {}).get("series") or {}
-    local = now.astimezone(PT)
+    local = _local_pt(now)
     mins = local.hour * 60 + local.minute
     eve_start = _hhmm_minutes(extra.get("aaa_evening_stop"), "20:00")
     eve_end = _hhmm_minutes(extra.get("aaa_close"), "20:59")

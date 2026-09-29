@@ -415,15 +415,67 @@ def test_unrealized_loss_trips_demo_daily_stop(tmp_path):
         TradingConfig(True, tmp_path / "toggle.json", tmp_path / "lock"),
     )
     now = datetime(2026, 9, 28, 22, 0, tzinfo=timezone.utc)
-    refresh_daily_limits(cfg, equity=Decimal("1000"), capital_in_use=Decimal("0"), now=now)
+    # Start of PT day: cash 900 + 200 marked at 0.50 = $1000. Cash does not move.
+    refresh_daily_limits(cfg, equity=Decimal("1000"), capital_in_use=Decimal("100"), now=now)
     port = Portfolio("kalshi_demo", Decimal("900"), Decimal("1000"))
     port.position("KXRT-FOO").qty = Decimal("200")
     port.position("KXRT-FOO").avg_price = Decimal("0.50")
+    assert port.equity({"KXRT-FOO": Decimal("0.50")}) == Decimal("1000")
     equity = port.equity({"KXRT-FOO": Decimal("0.20")})
     assert equity == Decimal("940")
     hit = refresh_daily_limits(cfg, equity=equity, capital_in_use=Decimal("40"), now=now)
     assert hit.loss_halted is True
     assert hit.day_pnl == Decimal("-60")
+
+
+def test_demo_session_unrealized_mark_stops_new_quotes(tmp_path):
+    cfg = load_config()
+    object.__setattr__(
+        cfg,
+        "trading",
+        TradingConfig(True, tmp_path / "toggle.json", tmp_path / "lock"),
+    )
+    now = datetime(2026, 9, 28, 22, 0, tzinfo=timezone.utc)
+    refresh_daily_limits(cfg, equity=Decimal("1000"), capital_in_use=Decimal("100"), now=now)
+    client = _DemoFake()
+    client.demo_balance = lambda **k: {  # type: ignore[method-assign]
+        "balance": 90000,
+        "balance_dollars": "900.00",
+        "portfolio_value": 4000,
+    }
+    client._positions = {
+        "market_positions": [
+            {
+                "ticker": "KXDEMO-COIN",
+                "position_fp": "200.00",
+                "market_exposure_dollars": "100.00",
+            }
+        ]
+    }
+    client._book = {
+        "orderbook_fp": {
+            "yes_dollars": [["0.1900", "80"]],
+            "no_dollars": [["0.7900", "80"]],
+        }
+    }
+    client.last_trade = lambda slug: Decimal("0.20")  # type: ignore[method-assign]
+    logger = DecisionLogger(tmp_path / "demo.jsonl")
+    try:
+        state = run_demo_session(
+            client,
+            cfg,
+            logger,
+            confirm_demo=True,
+            ticks=1,
+            ticker="KXDEMO-COIN",
+            sleep=False,
+            now=now,
+        )
+    finally:
+        logger.close()
+    assert state["daily_loss_limit_hit"] is True
+    assert state["quotes_placed"] == 0
+    assert "daily_loss_limit" in (tmp_path / "demo.jsonl").read_text()
 
 
 def test_demo_state_written_each_tick(tmp_path):

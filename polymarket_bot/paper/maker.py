@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import ROUND_HALF_EVEN, Decimal
 
 from polymarket_bot.config import AppConfig
@@ -10,7 +10,7 @@ from polymarket_bot.fees import MAX_PRICE, MIN_PRICE
 from polymarket_bot.market_data import MarketSnapshot
 from polymarket_bot.paper.portfolio import PaperOrder, Portfolio
 from polymarket_bot.market_risk import attach_market_risk, is_live_in_game, market_over_risk_threshold
-from polymarket_bot.series_filter import maker_min_hours, maker_universe_ok
+from polymarket_bot.series_filter import maker_min_hours, maker_universe_ok, quote_mode
 from polymarket_bot.paper.risk import (
     account_value_from_portfolio,
     past_resolution_cutoff,
@@ -41,6 +41,7 @@ def desired_quotes(
     config: AppConfig,
     order_id_prefix: str,
     resting: list[PaperOrder] | None = None,
+    now: datetime | None = None,
 ) -> list[PaperOrder]:
     maker = config.paper.maker
     if not maker.enabled:
@@ -51,7 +52,7 @@ def desired_quotes(
         return []
     if is_live_in_game(snap):
         return []
-    if not maker_universe_ok(snap, config):
+    if not maker_universe_ok(snap, config, now=now):
         return []
     if past_resolution_cutoff(snap, maker_min_hours(snap, config)):
         return []
@@ -64,6 +65,11 @@ def desired_quotes(
     if tick <= 0:
         return []
     pos = portfolio.position(snap.slug).qty
+    mode = quote_mode(snap, config, now or datetime.now(timezone.utc))
+    if mode == "halt":
+        return []
+    if mode == "unwind" and pos == 0:
+        return []
     skew = pos * maker.inventory_skew_per_contract
     improve = tick * Decimal(max(0, maker.improve_ticks))
     spread = snap.best_ask - snap.best_bid
@@ -101,6 +107,11 @@ def desired_quotes(
     for side, price in (("buy", bid), ("sell", ask)):
         if price is None:
             continue
+        if mode == "unwind":
+            if pos > 0 and side != "sell":
+                continue
+            if pos < 0 and side != "buy":
+                continue
         # Maker-only: never cross or lock the opposite side.
         if side == "buy" and price >= snap.best_ask:
             if pos < 0:

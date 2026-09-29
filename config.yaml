@@ -109,6 +109,32 @@ paper:
     aaa_close: "20:59"
     aaa_morning_blackout_start: "03:30"  # still-open daily + weekly KXAAAGASW
     aaa_morning_blackout_end: "07:00"
+    # KXBRENTW: Pyth Index.BRENT/USD 24/7. Times are America/Los_Angeles.
+    brent:
+      weekend_halt_start: "14:00"   # Friday 2:00 PM PT through Sunday 3:00 PM PT
+      weekend_halt_end: "15:00"
+      unwind_start: "12:00"         # reduce-only last 2 hours before Friday settle
+      friday_settle: "14:00"
+      recurring_blackouts:
+        - name: api_inventory
+          weekday: tue
+          start: "13:00"
+          end: "14:30"
+        - name: eia_weekly
+          weekday: wed
+          start: "07:00"
+          end: "08:30"
+      dated_blackouts:
+        - name: eia_weekly
+          at: "2026-10-15T09:00:00"  # delayed EIA; naive timestamps are PT
+          minutes: 90
+          replaces: eia_weekly       # skip that week's Wednesday window
+        - name: eia_steo
+          at: "2026-10-06T09:00:00"
+          minutes: 90
+        - name: opec_jmmc
+          date: "2026-10-04"
+          all_day: true
     event_blackout_minutes: 30
     events:
       - name: jobs

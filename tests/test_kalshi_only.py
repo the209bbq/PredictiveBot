@@ -46,6 +46,27 @@ def test_recorder_client_is_public_only_no_orders():
         client.signed_demo("GET", "/portfolio/balance", confirm_demo=True)
 
 
+def test_no_forbidden_feeds_or_scrapers():
+    from pathlib import Path
+
+    banned = (
+        "weather.com",
+        "rottentomatoes.com",
+        "metacritic.com",
+        "truthsocial.com",
+        "whitehouse.gov",
+    )
+    root = Path("polymarket_bot")
+    for path in root.rglob("*.py"):
+        text = path.read_text().lower()
+        for token in banned:
+            assert token not in text, f"{path} mentions {token}"
+    cfg = load_config()
+    disabled = [str(x).upper() for x in ((cfg.extra.get("paper") or {}).get("series") or {}).get("disabled") or []]
+    assert "KXTRUTHSOCIAL" in disabled
+    assert "KXTRUTHSOCIAL" not in [str(x).upper() for x in ((cfg.extra.get("paper") or {}).get("series") or {}).get("allow") or []]
+
+
 def test_load_config_isolates_repo_state_dir(tmp_path, monkeypatch):
     monkeypatch.setenv("PMBOT_STATE_DIR", str(tmp_path / "isolated"))
     cfg = load_config()

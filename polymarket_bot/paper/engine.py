@@ -30,14 +30,22 @@ from polymarket_bot.paper.risk import (
     snapshot_account_risk,
 )
 from polymarket_bot.daily_limits import refresh_daily_limits
+from polymarket_bot.kalshi_account import mark_price
 from polymarket_bot.scanner import scan_maker_universe, scan_near_resolution
-from polymarket_bot.series_filter import is_kxhigh_same_day, maker_min_hours
+from polymarket_bot.series_filter import is_kxhigh_same_day, maker_min_hours, maker_universe_ok
 from polymarket_bot.pnl import append_pnl
 from polymarket_bot.trading import TradingLock, trading_is_on
 
 
-def _mids(snaps: dict[str, MarketSnapshot]) -> dict[str, Decimal | None]:
-    return {slug: snap.mid for slug, snap in snaps.items()}
+def _mids(
+    snaps: dict[str, MarketSnapshot],
+    *ports: Portfolio,
+) -> dict[str, Decimal | None]:
+    out: dict[str, Decimal | None] = {}
+    for slug, snap in snaps.items():
+        qty = sum((port.position(slug).qty for port in ports), Decimal("0"))
+        out[slug] = mark_price(snap, qty, snap.last_trade)
+    return out
 
 
 def _cancel_all(orders: list[PaperOrder], logger: DecisionLogger, reason: str, strategy: str) -> list[PaperOrder]:
@@ -239,7 +247,7 @@ def _run_paper_locked(
                 live=False,
             )
 
-        mids = _mids(snaps)
+        mids = _mids(snaps, maker_port, near_port)
         for port in (maker_port, near_port):
             port.record_equity(mids)
 
@@ -324,6 +332,15 @@ def _run_paper_locked(
                         live=False,
                     )
                     continue
+                if order.strategy == "maker" and not maker_universe_ok(snap, config, now=tick_now):
+                    logger.log(
+                        "cancel",
+                        strategy=order.strategy,
+                        market=order.market,
+                        reason="series_filter",
+                        live=False,
+                    )
+                    continue
                 qty, reason = fill_qty(
                     order,
                     snap,
@@ -376,7 +393,7 @@ def _run_paper_locked(
             maker_book = process_book(maker_book, maker_port)
             near_book = process_book(near_book, near_port)
 
-            now_tick = datetime.now(timezone.utc)
+            now_tick = tick_now
             interval = config.paper.maker.requote_interval_seconds
             touch_ticks = config.paper.maker.requote_on_touch_ticks
             prefix = f"t{tick}"
@@ -410,7 +427,7 @@ def _run_paper_locked(
                                 live=False,
                             )
                     if strategy == "maker":
-                        quotes = maker.desired_quotes(snap, port, config, prefix, resting=kept)
+                        quotes = maker.desired_quotes(snap, port, config, prefix, resting=kept, now=now_tick)
                     else:
                         quotes = near_resolution.desired_quotes(
                             snap, port, config, prefix, resting=kept
@@ -478,7 +495,7 @@ def _run_paper_locked(
 
     maker_book = _cancel_all(maker_book, logger, "session_end", "maker")
     near_book = _cancel_all(near_book, logger, "session_end", "near_resolution")
-    mids = _mids(prev)
+    mids = _mids(prev, maker_port, near_port)
     maker_port.record_equity(mids)
     near_port.record_equity(mids)
     maker_state = maker_port.to_dict(mids)

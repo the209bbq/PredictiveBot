@@ -55,7 +55,7 @@ from polymarket_bot.kalshi_account import (
     position_rows,
 )
 from polymarket_bot.scanner import scan_maker_universe
-from polymarket_bot.series_filter import maker_min_hours, maker_universe_ok
+from polymarket_bot.series_filter import maker_min_hours, maker_universe_ok, quote_mode
 from polymarket_bot.trading import TradingLock, TradingPaused, trading_is_on
 
 
@@ -177,16 +177,26 @@ def _position_mids(
         snap.slug: mark_price(snap, port.position(snap.slug).qty, snap.last_trade)
     }
     getter = getattr(client, "last_trade", None)
+    book_fn = getattr(client, "book", None)
+    snap_fn = getattr(client, "snapshot", None)
     for slug, pos in port.positions.items():
         if pos.qty == 0 or slug == snap.slug:
             continue
+        other = None
+        if callable(book_fn) and callable(snap_fn):
+            try:
+                book = book_fn(slug)
+                other = snap_fn({"ticker": slug, "slug": slug}, book, now=datetime.now(timezone.utc))
+            except Exception:
+                other = None
         last = None
         if callable(getter):
             try:
                 last = getter(slug)
             except Exception:
                 last = None
-        mids[slug] = last if last is not None else (pos.avg_price or None)
+        fallback = last if last is not None else (pos.avg_price or None)
+        mids[slug] = mark_price(other, pos.qty, fallback)
     return mids
 
 
@@ -397,8 +407,25 @@ def run_demo_session(
             except DemoOrderError as exc:
                 logger.log("position_error", error=str(exc), live=False)
 
+            try:
+                bal_now = client.demo_balance(confirm_demo=True)
+                avail_now = _balance_available(bal_now)
+                if avail_now is not None:
+                    port.cash = avail_now
+            except DemoOrderError:
+                bal_now = {}
+
             mids_now = _position_mids(client, port, snap)
-            equity_now = port.equity(mids_now)
+            pos_map_now = position_map(position_snapshots[-1] if position_snapshots else {})
+            if pos_map_now:
+                equity_now = marked_equity(
+                    port.cash,
+                    pos_map_now,
+                    mids_now,
+                    portfolio_value=portfolio_value_dollars(bal_now),
+                )
+            else:
+                equity_now = port.equity(mids_now)
             at_risk_now, _ = snapshot_account_risk(port, placed_this_tick, equity_now)
             last_daily = refresh_daily_limits(
                 config,
@@ -429,12 +456,21 @@ def run_demo_session(
                         logger.log("cancel_error", error=str(exc), market=snap.slug, live=False)
 
             skip_reason = None
+            mode = quote_mode(snap, config, now_tick)
             if not trading_on:
                 skip_reason = "trading_off"
             elif snap.stale or not snap.book_fetched:
                 skip_reason = "stale_book"
-            elif not maker_universe_ok(snap, config, now=now_tick):
+            elif mode == "halt" or not maker_universe_ok(snap, config, now=now_tick):
                 skip_reason = "series_filter"
+                if not requote:
+                    try:
+                        canceller = getattr(client, "cancel_bot_demo_orders", None)
+                        if callable(canceller):
+                            canceller(confirm_demo=True)
+                        cancels += 1
+                    except DemoOrderError as exc:
+                        logger.log("cancel_error", error=str(exc), market=snap.slug, live=False)
             elif is_live_in_game(snap):
                 skip_reason = "live_in_game"
             elif market_over_risk_threshold(snap, config.paper.risk.max_market_risk_score):
@@ -453,7 +489,7 @@ def run_demo_session(
                     demo=True,
                 )
             elif requote:
-                desired = maker.desired_quotes(snap, port, config, f"d{tick}")
+                desired = maker.desired_quotes(snap, port, config, f"d{tick}", now=now_tick)
                 for order in desired:
                     side = "bid" if order.side == "buy" else "ask"
                     bal = {}
@@ -731,8 +767,8 @@ def format_demo_report(state: dict[str, Any]) -> str:
     if pos_rows:
         for row in pos_rows:
             ticker = row.get("ticker") or row.get("market_ticker") or "?"
-            qty = row.get("position") or row.get("quantity") or row.get("qty")
-            avg = row.get("average_price") or row.get("avg_price") or row.get("avg_px")
+            qty = position_qty(row) or row.get("position") or row.get("quantity") or row.get("qty")
+            avg = position_avg_price(row) or row.get("average_price") or row.get("avg_price") or row.get("avg_px")
             extra = f" avg={avg}" if avg is not None else ""
             lines.append(f"  {ticker}: qty={qty}{extra}")
     else:
@@ -749,7 +785,7 @@ def format_demo_report(state: dict[str, Any]) -> str:
         for fill in fills[:20]:
             lines.append(
                 f"  {fill.get('ticker') or fill.get('market_ticker') or '?'} "
-                f"{fill.get('side') or ''} {fill.get('count') or fill.get('quantity') or ''} "
+                f"{fill.get('side') or ''} {fill_qty_field(fill) or fill.get('count') or fill.get('quantity') or ''} "
                 f"@ {fill.get('yes_price_dollars') or fill.get('price') or ''}"
             )
         if len(fills) > 20:

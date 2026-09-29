@@ -7,7 +7,7 @@ from pathlib import Path
 import httpx
 
 from polymarket_bot.config import DashboardConfig, TradingConfig, load_config
-from polymarket_bot.dashboard import build_snapshot, make_handler
+from polymarket_bot.dashboard import PAGE, _normalize_fill, build_snapshot, make_handler
 from polymarket_bot.pnl import append_pnl, history_path, load_history, snapshot_from_state, summarize
 from polymarket_bot.trading import read_toggle
 
@@ -97,6 +97,9 @@ def test_dashboard_demo_env_uses_demo_state_only(tmp_path):
     assert snap["source"] == "demo"
     assert snap["fills"][0]["qty"] == Decimal("2.00")
     assert snap["fills"][0]["market"] == "KXDEMO-COIN"
+    mapped = _normalize_fill({"ticker": "KXRT-FOO", "side": "yes", "count": 4, "yes_price_dollars": "0.40"})
+    assert mapped["qty"] == Decimal("4")
+    assert "count_fp" in PAGE or "f.qty||f.count_fp||f.count" in PAGE
 
 
 def test_dashboard_http_toggle_and_auth(tmp_path, monkeypatch):

@@ -27,6 +27,18 @@ def _cfg(tmp_path):
     return cfg
 
 
+def test_pt_date_crosses_november_dst_fallback():
+    before = datetime(2026, 11, 2, 7, 30, tzinfo=timezone.utc)
+    after = datetime(2026, 11, 2, 8, 30, tzinfo=timezone.utc)
+    assert pt_date(before) == "2026-11-01"
+    assert pt_date(after) == "2026-11-02"
+    # Same UTC clock time is a different PT civil time after the fallback.
+    pdt = datetime(2026, 10, 28, 14, 0, tzinfo=timezone.utc)  # 07:00 PDT
+    pst = datetime(2026, 11, 4, 15, 0, tzinfo=timezone.utc)  # 07:00 PST
+    assert pt_date(pdt) == "2026-10-28"
+    assert pt_date(pst) == "2026-11-04"
+
+
 def test_daily_loss_triggers_and_resets_at_pt_midnight(tmp_path):
     cfg = _cfg(tmp_path)
     afternoon = datetime(2026, 9, 29, 20, 0, tzinfo=timezone.utc)  # 13:00 PT
