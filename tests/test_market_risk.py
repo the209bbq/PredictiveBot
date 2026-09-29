@@ -7,6 +7,7 @@ from polymarket_bot.config import load_config
 from polymarket_bot.exchanges.kalshi import snapshot_from_kalshi
 from polymarket_bot.market_data import MarketSnapshot
 from polymarket_bot.market_risk import (
+    _dates_in_ids,
     DEFAULT_MARKET_RISK_SCORE,
     HARD_MAX_MARKET_RISK_SCORE,
     MarketRiskError,
@@ -158,6 +159,93 @@ def test_live_player_prop_on_started_game_is_100_and_not_quoted():
     cfg = load_config()
     port = Portfolio("maker", Decimal("1000"), Decimal("1000"))
     assert desired_quotes(snap, port, cfg, "t0") == []
+
+
+def test_kalshi_ticker_date_is_year_month_day():
+    snap = snapshot_from_kalshi(
+        {"ticker": "KXNFLGAME-26SEP28PHICHI-CHI", "title": "x", "status": "active"},
+        None,
+        now=datetime(2026, 9, 28, tzinfo=timezone.utc),
+    )
+    assert _dates_in_ids(snap) == [datetime(2026, 9, 28, tzinfo=timezone.utc).date()]
+
+
+def test_cooper_prop_late_close_without_kickoff_is_live():
+    """Repro: 4:58 PM PT during PHI-CHI. Close/expiration days later; no occurrence."""
+    now = datetime(2026, 9, 28, 23, 58, tzinfo=timezone.utc)
+    snap = snapshot_from_kalshi(
+        {
+            "ticker": "KXNFLYARDS-26SEP28PHICHI-COOPER",
+            "title": "Cooper receiving yards",
+            "yes_sub_title": "Over 64.5",
+            "event_ticker": "KXNFLGAME-26SEP28PHICHI",
+            "series_ticker": "KXNFLYARDS",
+            "category": "Sports",
+            "status": "active",
+            "yes_bid_dollars": "0.48",
+            "yes_ask_dollars": "0.50",
+            "expected_expiration_time": "2026-09-30T12:00:00Z",
+            "close_time": "2026-10-02T00:00:00Z",
+        },
+        {
+            "orderbook_fp": {
+                "yes_dollars": [["0.4800", "80"]],
+                "no_dollars": [["0.5000", "80"]],
+            }
+        },
+        now=now,
+    )
+    assert snap.hours_to_resolution is not None
+    assert snap.hours_to_resolution > 6
+    assert snap.hours_to_resolution > 24
+    assert looks_like_player_prop(snap)
+    assert is_live_in_game(snap, now=now)
+    score, parts = compute_market_risk(snap, now=now)
+    assert parts["live_game"] == Decimal("1")
+    assert score == Decimal("1")
+    cfg = load_config()
+    port = Portfolio("maker", Decimal("1000"), Decimal("1000"))
+    attach_market_risk(snap, now=now)
+    assert desired_quotes(snap, port, cfg, "t0") == []
+
+
+def test_pregame_with_future_kickoff_is_not_live_yet():
+    now = datetime(2026, 9, 28, 16, 0, tzinfo=timezone.utc)
+    snap = snapshot_from_kalshi(
+        {
+            "ticker": "KXNFLGAME-26SEP28PHICHI-CHI",
+            "title": "Eagles vs Bears",
+            "category": "Sports",
+            "status": "active",
+            "yes_bid_dollars": "0.49",
+            "yes_ask_dollars": "0.51",
+            "occurrence_datetime": "2026-09-28T20:15:00Z",
+            "close_time": "2026-10-02T00:00:00Z",
+        },
+        None,
+        now=now,
+    )
+    assert not is_live_in_game(snap, now=now)
+
+
+def test_season_long_receiving_yards_not_live():
+    now = datetime(2026, 9, 28, 23, 58, tzinfo=timezone.utc)
+    snap = snapshot_from_kalshi(
+        {
+            "ticker": "KXNFLSEASON-COOPER-YDS",
+            "title": "Cooper regular-season receiving yards",
+            "category": "Sports",
+            "status": "active",
+            "yes_bid_dollars": "0.49",
+            "yes_ask_dollars": "0.51",
+            "close_time": "2027-02-01T00:00:00Z",
+        },
+        None,
+        now=now,
+    )
+    assert looks_like_player_prop(snap)
+    assert snap.hours_to_resolution is not None and snap.hours_to_resolution > 24
+    assert not is_live_in_game(snap, now=now)
 
 
 def test_same_day_game_is_live_even_if_close_is_far():

@@ -24,7 +24,7 @@ from __future__ import annotations
 import re
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -46,6 +46,11 @@ _LIVE_PHRASES = (
 )
 _GAME_TICKER = re.compile(r"GAME", re.IGNORECASE)
 _DATE_TEAM = re.compile(r"\d{2}[A-Z]{3}\d{2}[A-Z]{4,}")
+_DATE_TOKEN = re.compile(r"(\d{2})([A-Z]{3})(\d{2})(?=[A-Z]|[-_]|$)")
+_MONTHS = {
+    "JAN": 1, "FEB": 2, "MAR": 3, "APR": 4, "MAY": 5, "JUN": 6,
+    "JUL": 7, "AUG": 8, "SEP": 9, "OCT": 10, "NOV": 11, "DEC": 12,
+}
 _SPORTS = ("nfl", "nba", "mlb", "nhl", "ncaa", "wnba", "soccer", "epl", "football", "basketball")
 _PROP = (
     "receiving", "rushing", "passing yards", "receiving yards", "rushing yards",
@@ -113,6 +118,32 @@ def _blob(snap: MarketSnapshot) -> str:
     ).lower()
 
 
+def _dates_in_ids(snap: MarketSnapshot) -> list:
+    ids = f"{_market_ids(snap)} {_blob(snap)}".upper()
+    out = []
+    for match in _DATE_TOKEN.finditer(ids):
+        year, mon, day = match.group(1), match.group(2), match.group(3)
+        month = _MONTHS.get(mon)
+        if month is None:
+            continue
+        try:
+            parsed = datetime(2000 + int(year), month, int(day), tzinfo=timezone.utc).date()
+        except ValueError:
+            continue
+        if parsed not in out:
+            out.append(parsed)
+    return out
+
+
+def game_date_is_active(snap: MarketSnapshot, now: datetime) -> bool:
+    """Ticker/event dates like 26SEP28: live on that calendar day and the next."""
+    today = now.date()
+    for game_day in _dates_in_ids(snap):
+        if timedelta(0) <= (today - game_day) <= timedelta(days=1):
+            return True
+    return False
+
+
 def looks_like_player_prop(snap: MarketSnapshot) -> bool:
     text = _blob(snap)
     return any(tok in text for tok in _PROP)
@@ -151,10 +182,13 @@ def is_live_in_game(snap: MarketSnapshot, *, now: datetime | None = None) -> boo
         market.get("occurrence_datetime") or market.get("event_occurrence_datetime")
     )
     now = now or datetime.now(timezone.utc)
-    if occ is not None and occ <= now:
+    if occ is not None:
+        return occ <= now
+    # No kickoff on the market (common on player props). A date in the
+    # ticker/event/series (26SEP28) marks a same-day game even when official
+    # close/expiration is days later — the 6h cutoff never trips.
+    if game_date_is_active(snap, now):
         return True
-    # Same-day / in-window game or prop: official close is often hours after
-    # kickoff, which used to sneak past maker_min_hours_to_resolution.
     if hours is None or hours < 24:
         return True
     return False
@@ -193,7 +227,11 @@ class PriceHistory:
         return max(abs(xs[i] - xs[i - 1]) for i in range(1, len(xs)))
 
 
-def _components(snap: MarketSnapshot, history: PriceHistory | None) -> dict[str, Decimal]:
+def _components(
+    snap: MarketSnapshot,
+    history: PriceHistory | None,
+    now: datetime | None = None,
+) -> dict[str, Decimal]:
     mid = snap.mid
     spread = snap.spread if snap.spread is not None else ZERO
     depth = (snap.bid_depth_contracts or ZERO) + (snap.ask_depth_contracts or ZERO)
@@ -225,7 +263,7 @@ def _components(snap: MarketSnapshot, history: PriceHistory | None) -> dict[str,
         scale = ONE if is_news_driven(snap) else Decimal("0.35")
         coin = _clamp01(proximity * scale)
 
-    live = ONE if is_live_in_game(snap) else ZERO
+    live = ONE if is_live_in_game(snap, now=now) else ZERO
     return {
         "volatility": vol,
         "jump": jump,
@@ -240,8 +278,10 @@ def _components(snap: MarketSnapshot, history: PriceHistory | None) -> dict[str,
 def compute_market_risk(
     snap: MarketSnapshot,
     history: PriceHistory | None = None,
+    *,
+    now: datetime | None = None,
 ) -> tuple[Decimal, dict[str, Decimal]]:
-    parts = _components(snap, history)
+    parts = _components(snap, history, now=now)
     score = (
         Decimal("0.20") * parts["volatility"]
         + Decimal("0.18") * parts["jump"]
@@ -259,10 +299,12 @@ def compute_market_risk(
 def attach_market_risk(
     snap: MarketSnapshot,
     history: PriceHistory | None = None,
+    *,
+    now: datetime | None = None,
 ) -> MarketSnapshot:
     if history is not None:
         history.observe(snap.slug, snap.mid)
-    score, parts = compute_market_risk(snap, history)
+    score, parts = compute_market_risk(snap, history, now=now)
     snap.risk_score = score
     snap.risk_components = {k: v for k, v in parts.items()}
     return snap

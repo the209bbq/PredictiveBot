@@ -138,6 +138,34 @@ class _RankClient:
         return None
 
 
+def test_sort_key_with_ticker_never_compares_dicts():
+    from polymarket_bot.scanner import _market_ticker
+
+    a = {
+        "ticker": "KXTIE-B",
+        "slug": "KXTIE-B",
+        "status": "open",
+        "yes_bid_dollars": "0.49",
+        "yes_ask_dollars": "0.51",
+    }
+    b = {
+        "ticker": "KXTIE-A",
+        "slug": "KXTIE-A",
+        "status": "open",
+        "yes_bid_dollars": "0.49",
+        "yes_ask_dollars": "0.51",
+    }
+    score, spread = Decimal("-100"), Decimal("0.02")
+    try:
+        sorted([(score, spread, a), (score, spread, b)])
+        raise AssertionError("comparing dicts should TypeError")
+    except TypeError:
+        pass
+    ranked = [(score, spread, _market_ticker(a), a), (score, spread, _market_ticker(b), b)]
+    ranked.sort(key=lambda row: (row[0], row[1], row[2]))
+    assert [row[2] for row in ranked] == ["KXTIE-A", "KXTIE-B"]
+
+
 def test_scanner_tie_on_score_and_spread_does_not_compare_dicts():
     cfg = load_config()
 

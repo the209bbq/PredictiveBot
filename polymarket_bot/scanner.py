@@ -114,7 +114,7 @@ def scan_markets(
     picked = _rank_for_books(client, listed, now, config)
     snapshots = _fetch_books(client, picked, now, config)
     liquid = [s for s in snapshots if is_liquid(s, config.scanner)]
-    liquid.sort(key=lambda s: (-liquidity_score(s), s.spread or Decimal("1")))
+    liquid.sort(key=lambda s: (-liquidity_score(s), s.spread or Decimal("1"), s.slug or ""))
     return liquid[: config.scanner.top_n]
 
 
