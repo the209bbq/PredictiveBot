@@ -13,6 +13,11 @@ from dotenv import load_dotenv
 
 from polymarket_bot.account_risk import HARD_MAX_ACCOUNT_RISK_PCT, validate_account_risk_pct
 from polymarket_bot.guard import assert_paper_only
+from polymarket_bot.market_risk import (
+    DEFAULT_MARKET_RISK_SCORE,
+    HARD_MAX_MARKET_RISK_SCORE,
+    validate_market_risk_score,
+)
 
 
 def _dec(value: Any, default: str | None = None) -> Decimal:
@@ -75,6 +80,8 @@ class RiskConfig:
     maker_min_hours_to_resolution: float
     max_account_risk_pct: Decimal
     allow_account_risk_above_hard_max: bool
+    max_market_risk_score: Decimal
+    allow_market_risk_above_hard_max: bool
 
 
 @dataclass(frozen=True)
@@ -171,6 +178,9 @@ def load_config(path: str | Path | None = None) -> AppConfig:
     risk_pct = _dec(risk_raw.get("max_account_risk_pct"), str(HARD_MAX_ACCOUNT_RISK_PCT))
     allow_above = bool(risk_raw.get("allow_account_risk_above_hard_max", False))
     validate_account_risk_pct(risk_pct, allow_above_hard_max=allow_above)
+    market_score = _dec(risk_raw.get("max_market_risk_score"), str(DEFAULT_MARKET_RISK_SCORE))
+    allow_market_above = bool(risk_raw.get("allow_market_risk_above_hard_max", False))
+    validate_market_risk_score(market_score, allow_above_hard_max=allow_market_above)
 
     config = AppConfig(
         dry_run=bool(raw.get("dry_run", True)),
@@ -237,6 +247,8 @@ def load_config(path: str | Path | None = None) -> AppConfig:
                 maker_min_hours_to_resolution=float(risk_raw.get("maker_min_hours_to_resolution", 6)),
                 max_account_risk_pct=risk_pct,
                 allow_account_risk_above_hard_max=allow_above,
+                max_market_risk_score=market_score,
+                allow_market_risk_above_hard_max=allow_market_above,
             ),
             fills=FillConfig(
                 require_strict_trade_through=bool(fills_raw.get("require_strict_trade_through", True)),

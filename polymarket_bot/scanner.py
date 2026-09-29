@@ -9,6 +9,7 @@ from polymarket_bot.config import AppConfig, ScannerConfig
 from polymarket_bot.market_data import MarketDataClient, MarketSnapshot
 from polymarket_bot.market_data.errors import BookFetchError
 from polymarket_bot.market_data.normalize import snapshot_from_payloads
+from polymarket_bot.market_risk import attach_market_risk, format_score
 
 
 def _snapshot(client: MarketDataClient, market: dict, book, now, config: AppConfig) -> MarketSnapshot:
@@ -93,6 +94,7 @@ def _fetch_books(client, markets, now, config) -> list[MarketSnapshot]:
         snap = _snapshot(client, market, book, now, config)
         snap.stale = False
         snap.book_fetched = True
+        attach_market_risk(snap)
         snapshots.append(snap)
     return snapshots
 
@@ -160,8 +162,8 @@ def format_scan_table(rows: list[MarketSnapshot]) -> str:
     if not rows:
         return "No liquid markets matched the scanner filters."
     header = (
-        f"{'venue':<14} {'slug':<42} {'mid':>7} {'sprd':>7} {'bidQty':>10} {'askQty':>10} "
-        f"{'vol':>10} {'hrs':>8} question"
+        f"{'venue':<14} {'slug':<42} {'mid':>7} {'sprd':>7} {'risk':>6} {'bidQty':>10} "
+        f"{'askQty':>10} {'vol':>10} {'hrs':>8} question"
     )
     lines = [header, "-" * len(header)]
     for s in rows:
@@ -171,8 +173,9 @@ def format_scan_table(rows: list[MarketSnapshot]) -> str:
         vol = f"{s.volume_shares:.0f}" if s.volume_shares is not None else "-"
         q = (s.question or "")[:48]
         stale = " [STALE]" if s.stale else ""
+        risk = format_score(s.risk_score)
         lines.append(
-            f"{s.venue:<14} {s.slug:<42} {mid:>7} {sprd:>7} {s.bid_depth_contracts:>10.0f} "
+            f"{s.venue:<14} {s.slug:<42} {mid:>7} {sprd:>7} {risk:>6} {s.bid_depth_contracts:>10.0f} "
             f"{s.ask_depth_contracts:>10.0f} {vol:>10} {hrs:>8} {q}{stale}"
         )
     return "\n".join(lines)

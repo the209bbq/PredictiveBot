@@ -23,7 +23,11 @@ class _DemoFake:
     def __init__(self) -> None:
         self.placed: list[dict] = []
         self.cancelled = 0
+        self.cancelled_all = 0
+        self.cancelled_bot = 0
         self.shutdowns = 0
+        self.shutdown_emergency: bool | None = None
+        self._positions: dict = {"market_positions": []}
         self._market = {
             "ticker": "KXDEMO-COIN",
             "slug": "KXDEMO-COIN",
@@ -66,18 +70,27 @@ class _DemoFake:
         return {"order": {"order_id": f"o{len(self.placed)}"}}
 
     def cancel_all_demo_orders(self, *, confirm_demo):
-        self.cancelled += 1
+        self.cancelled_all += 1
         return {}
 
-    def shutdown_demo_orders(self, *, confirm_demo):
+    def cancel_bot_demo_orders(self, *, confirm_demo):
+        self.cancelled += 1
+        self.cancelled_bot += 1
+        return {"cancelled": 1}
+
+    def list_demo_orders(self, *, status="resting", confirm_demo=False):
+        return []
+
+    def shutdown_demo_orders(self, *, confirm_demo, emergency_all=False):
         self.shutdowns += 1
+        self.shutdown_emergency = emergency_all
         return []
 
     def demo_balance(self, *, confirm_demo):
         return {"balance": "1000.00"}
 
     def demo_positions(self, *, confirm_demo):
-        return {"market_positions": []}
+        return self._positions
 
     def demo_fills(self, *, confirm_demo, limit=100):
         return []
@@ -107,23 +120,28 @@ def test_demo_session_quotes_requotes_and_verifies(tmp_path):
     assert state["demo"] is True
     assert state["live"] is False
     assert state["quotes_placed"] >= 2
-    assert client.cancelled >= 2
+    assert client.cancelled_bot >= 2
+    assert client.cancelled_all == 0
     assert client.shutdowns == 1
+    assert client.shutdown_emergency is False
     assert not state["resting_alert"]
     report = format_demo_report(state)
     assert "DEMO ONLY" in report
     assert "KXDEMO-COIN" in report
     assert "Quotes placed" in report
     assert "Resting leftover" in report
+    assert "Market risk" in report
+    assert state["cancels_scoped"] is True
 
 
 def test_demo_session_alerts_when_resting_remain(tmp_path):
     cfg = load_config()
     client = _DemoFake()
 
-    def boom(*, confirm_demo):
+    def boom(*, confirm_demo, emergency_all=False):
         client.shutdowns += 1
-        raise DemoOrderError("ALERT: resting Kalshi DEMO orders remain after cancel-all. Count=2")
+        client.shutdown_emergency = emergency_all
+        raise DemoOrderError("ALERT: resting Kalshi DEMO orders this bot placed remain after cancel. Count=2")
 
     client.shutdown_demo_orders = boom  # type: ignore[method-assign]
     logger = DecisionLogger(tmp_path / "demo.jsonl")
@@ -186,7 +204,8 @@ def test_demo_session_pauses_when_trading_off(tmp_path):
     assert state["quotes_placed"] == 0
     assert state["trading"] == "off"
     assert "trading_paused" in (tmp_path / "demo.jsonl").read_text()
-    assert client.cancelled >= 1
+    assert client.cancelled_bot >= 1
+    assert client.cancelled_all == 0
 
 
 def test_assert_demo_order_respects_toggle_and_cap(tmp_path):
@@ -221,3 +240,104 @@ def test_assert_demo_order_respects_toggle_and_cap(tmp_path):
         raise AssertionError("should have raised")
     except AccountRiskError as exc:
         assert "exceed" in str(exc).lower()
+
+
+def test_leftover_positions_count_in_account_risk(tmp_path):
+    cfg = load_config()
+    client = _DemoFake()
+    client._positions = {
+        "market_positions": [
+            {"ticker": "OLD-LEFTOVER", "position": "200", "average_price": "0.50"},
+        ]
+    }
+    logger = DecisionLogger(tmp_path / "demo.jsonl")
+    now = datetime(2026, 9, 28, 22, 0, tzinfo=timezone.utc)
+    try:
+        state = run_demo_session(
+            client,
+            cfg,
+            logger,
+            confirm_demo=True,
+            ticks=1,
+            ticker="KXDEMO-COIN",
+            sleep=False,
+            now=now,
+        )
+    finally:
+        logger.close()
+    risk = state["account_risk"]
+    # leftover 200 * 0.50 = $100 on $1000 = 10%, plus any new quotes
+    assert Decimal(str(risk["at_risk"])) >= Decimal("100")
+    assert "OLD-LEFTOVER" in ((state.get("maker") or {}).get("positions") or {})
+    report = format_demo_report(state)
+    assert "OLD-LEFTOVER" in report or "100" in str(risk["at_risk"])
+
+
+def test_leftover_positions_can_block_new_quotes(tmp_path):
+    cfg = load_config()
+    object.__setattr__(cfg.paper.risk, "max_account_risk_pct", Decimal("0.05"))
+    client = _DemoFake()
+    client._positions = {
+        "market_positions": [
+            {"ticker": "OLD-LEFTOVER", "position": "200", "average_price": "0.50"},
+        ]
+    }
+    logger = DecisionLogger(tmp_path / "demo.jsonl")
+    try:
+        state = run_demo_session(
+            client,
+            cfg,
+            logger,
+            confirm_demo=True,
+            ticks=1,
+            ticker="KXDEMO-COIN",
+            sleep=False,
+        )
+    finally:
+        logger.close()
+    assert state["quotes_placed"] == 0
+    assert "account_risk_cap" in (tmp_path / "demo.jsonl").read_text() or Decimal(
+        str(state["account_risk"]["pct"])
+    ) > Decimal("0.05")
+
+
+def test_demo_skips_live_nfl_game_inside_maker_hours_window(tmp_path):
+    cfg = load_config()
+    client = _DemoFake()
+    now = datetime(2026, 9, 28, 22, 0, tzinfo=timezone.utc)
+    client._market = {
+        "ticker": "KXNFLGAME-26SEP28PHICHI-CHI",
+        "slug": "KXNFLGAME-26SEP28PHICHI-CHI",
+        "title": "Eagles vs Bears",
+        "event_title": "PHI vs CHI",
+        "category": "Sports",
+        "status": "active",
+        "yes_bid_dollars": "0.49",
+        "yes_ask_dollars": "0.51",
+        "occurrence_datetime": "2026-09-28T20:15:00Z",
+        "expected_expiration_time": "2026-09-29T02:00:00Z",
+        "close_time": "2026-09-29T06:00:00Z",
+        "fee_type": "quadratic",
+        "fee_multiplier": 1,
+    }
+    logger = DecisionLogger(tmp_path / "demo.jsonl")
+    try:
+        state = run_demo_session(
+            client,
+            cfg,
+            logger,
+            confirm_demo=True,
+            ticks=1,
+            ticker="KXNFLGAME-26SEP28PHICHI-CHI",
+            sleep=False,
+            now=now,
+        )
+    finally:
+        logger.close()
+    assert state["quotes_placed"] == 0
+    text = (tmp_path / "demo.jsonl").read_text()
+    assert "live_in_game" in text or "market_risk_score" in text or "resolution_cutoff" in text
+    score = (state.get("market_risk") or {}).get("KXNFLGAME-26SEP28PHICHI-CHI") or {}
+    assert Decimal(str(score.get("score") or 0)) >= Decimal("0.95")
+    report = format_demo_report(state)
+    assert "live-game" in report or "95" in report

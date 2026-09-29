@@ -90,3 +90,15 @@ def test_default_cap_is_hard_max():
     cfg = load_config()
     assert cfg.paper.risk.max_account_risk_pct == HARD_MAX_ACCOUNT_RISK_PCT
     assert cfg.paper.risk.allow_account_risk_above_hard_max is False
+
+
+def test_leftover_positions_are_included_in_at_risk():
+    leftover = {"old": (Decimal("80"), Decimal("0.40"))}  # $32
+    orders = [("buy", Decimal("0.50"), Decimal("10"))]  # + $5
+    assert total_at_risk(leftover, orders) == Decimal("37.00")
+    port = Portfolio("maker", Decimal("1000"), Decimal("1000"))
+    port.position("old").qty = Decimal("80")
+    port.position("old").avg_price = Decimal("0.40")
+    at_risk, frac = snapshot_account_risk(port, [], Decimal("1000"))
+    assert at_risk == Decimal("32.00")
+    assert frac == Decimal("0.032")

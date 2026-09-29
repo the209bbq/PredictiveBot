@@ -78,6 +78,8 @@ class MarketSnapshot:
     fee_multiplier: Decimal = Decimal("1")
     stale: bool = False
     book_fetched: bool = False
+    risk_score: Decimal | None = None
+    risk_components: dict[str, Decimal] = field(default_factory=dict)
 
     @property
     def liquid(self) -> bool:

@@ -96,3 +96,15 @@ def test_stale_book_not_quoted():
     assert desired_quotes(_snap(stale=True), port, cfg, "t0") == []
     assert desired_quotes(_snap(book_fetched=False), port, cfg, "t0") == []
     assert near_quotes(_snap(bid="0.96", ask="0.97", hours=12, stale=True), port, cfg, "t0") == []
+
+
+def test_live_game_and_high_score_not_quoted():
+    cfg = load_config()
+    port = Portfolio("maker", Decimal("1000"), Decimal("1000"))
+    live = _snap(slug="KXNFLGAME-26SEP28PHICHI-CHI", hours=8)
+    assert desired_quotes(live, port, cfg, "t0") == []
+    risky = _snap(bid="0.50", ask="0.51", hours=48)
+    risky.risk_score = Decimal("0.90")
+    assert desired_quotes(risky, port, cfg, "t0") == []
+    cutoff = _snap(hours=5)
+    assert desired_quotes(cutoff, port, cfg, "t0") == []

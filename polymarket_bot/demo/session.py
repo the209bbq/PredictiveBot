@@ -23,9 +23,21 @@ from polymarket_bot.account_risk import (
     format_risk_pct,
     total_at_risk,
 )
+from polymarket_bot.market_risk import (
+    PriceHistory,
+    attach_market_risk,
+    format_score,
+    is_live_in_game,
+    market_over_risk_threshold,
+    score_payload,
+)
 from polymarket_bot.paper import maker
 from polymarket_bot.paper.portfolio import PaperOrder, Portfolio
-from polymarket_bot.paper.risk import snapshot_account_risk, would_breach_account_risk
+from polymarket_bot.paper.risk import (
+    past_resolution_cutoff,
+    snapshot_account_risk,
+    would_breach_account_risk,
+)
 from polymarket_bot.scanner import scan_markets
 from polymarket_bot.trading import TradingLock, TradingPaused, trading_is_on
 
@@ -110,7 +122,19 @@ def _orders_from_resting(rows: list[dict[str, Any]]) -> list[tuple[str, Decimal,
     return out
 
 
+def _position_avg_price(row: dict[str, Any], qty: Decimal) -> Decimal | None:
+    avg = _as_decimal(row.get("average_price") or row.get("avg_price") or row.get("avg_px"))
+    if avg is not None:
+        return abs(avg)
+    exposure = _as_decimal(row.get("market_exposure") or row.get("exposure"))
+    if exposure is not None and qty != 0:
+        return abs(exposure / qty)
+    return None
+
+
 def _sync_portfolio(port: Portfolio, positions: dict[str, Any] | list) -> None:
+    """Mirror every exchange position (including leftovers from earlier sessions)."""
+    seen: set[str] = set()
     for row in _position_rows(positions):
         ticker = str(row.get("ticker") or row.get("market_ticker") or "")
         if not ticker:
@@ -118,7 +142,15 @@ def _sync_portfolio(port: Portfolio, positions: dict[str, Any] | list) -> None:
         qty = _as_decimal(row.get("position") or row.get("quantity") or row.get("qty"))
         if qty is None:
             continue
-        port.position(ticker).qty = qty
+        pos = port.position(ticker)
+        pos.qty = qty
+        avg = _position_avg_price(row, qty)
+        if avg is not None:
+            pos.avg_price = avg
+        seen.add(ticker)
+    for slug, pos in list(port.positions.items()):
+        if slug not in seen:
+            pos.qty = Decimal("0")
 
 
 def _order_id(payload: dict[str, Any]) -> str | None:
@@ -219,9 +251,10 @@ def assert_demo_order_within_risk(
     for row in _position_rows(positions):
         slug = str(row.get("ticker") or row.get("market_ticker") or "")
         q = _as_decimal(row.get("position") or row.get("quantity") or row.get("qty"))
-        avg = _as_decimal(row.get("average_price") or row.get("avg_price")) or px
-        if slug and q:
-            pos_map[slug] = (q, avg)
+        if not slug or q is None or q == 0:
+            continue
+        avg = _position_avg_price(row, q) or px
+        pos_map[slug] = (q, avg)
     orders = _orders_from_resting(resting_rows)
     orders.append((side, px, qty))
     frac = account_risk_fraction(total_at_risk(pos_map, orders), equity)
@@ -265,7 +298,10 @@ def run_demo_session(
     leftover_alert: str | None = None
     remaining: list[dict[str, Any]] = []
     last_risk: dict[str, Any] = {}
+    last_scores: dict[str, dict[str, Any]] = {}
     last_trading = "on"
+    history = PriceHistory()
+    placed_this_tick: list[PaperOrder] = []
 
     logger.log(
         "demo_start",
@@ -279,37 +315,76 @@ def run_demo_session(
     lock = TradingLock(config.trading.lock_path)
     lock.acquire()
     try:
+        try:
+            start_positions = client.demo_positions(confirm_demo=True)
+            _sync_portfolio(port, start_positions)
+            position_snapshots.append(start_positions)
+        except DemoOrderError as exc:
+            logger.log("position_error", error=str(exc), live=False)
+
         for tick in range(n_ticks):
             snap = _refresh_snapshot(client, snap, logger)
+            attach_market_risk(snap, history)
+            last_scores[snap.slug] = score_payload(snap)
+            logger.log(
+                "market_risk",
+                market=snap.slug,
+                score=format_score(snap.risk_score),
+                live_game=bool((snap.risk_components or {}).get("live_game")),
+                live=False,
+                demo=True,
+            )
             trading_on, trading_reason = trading_is_on(config)
             last_trading = "on" if trading_on else "off"
             try:
-                client.cancel_all_demo_orders(confirm_demo=True)
+                canceller = getattr(client, "cancel_bot_demo_orders", None)
+                if callable(canceller):
+                    canceller(confirm_demo=True)
+                else:
+                    client.cancel_all_demo_orders(confirm_demo=True)
                 cancels += 1
                 logger.log(
                     "cancel",
                     reason="trading_off" if not trading_on else "requote",
                     market=snap.slug,
+                    scoped=True,
                     live=False,
                     demo=True,
                 )
             except DemoOrderError as exc:
                 logger.log("cancel_error", error=str(exc), market=snap.slug, live=False)
 
-            if not trading_on:
-                logger.log("trading_paused", reason=trading_reason, live=False, demo=True)
-            elif snap.stale or not snap.book_fetched:
-                logger.log("skip_quote", reason="stale_book", market=snap.slug, live=False)
-            else:
-                try:
-                    pos_payload = client.demo_positions(confirm_demo=True)
-                    _sync_portfolio(port, pos_payload)
-                    position_snapshots.append(pos_payload)
-                except DemoOrderError as exc:
-                    logger.log("position_error", error=str(exc), live=False)
+            try:
+                pos_payload = client.demo_positions(confirm_demo=True)
+                _sync_portfolio(port, pos_payload)
+                position_snapshots.append(pos_payload)
+            except DemoOrderError as exc:
+                logger.log("position_error", error=str(exc), live=False)
 
+            skip_reason = None
+            if not trading_on:
+                skip_reason = "trading_off"
+            elif snap.stale or not snap.book_fetched:
+                skip_reason = "stale_book"
+            elif is_live_in_game(snap):
+                skip_reason = "live_in_game"
+            elif market_over_risk_threshold(snap, config.paper.risk.max_market_risk_score):
+                skip_reason = "market_risk_score"
+            elif past_resolution_cutoff(snap, config.paper.risk.maker_min_hours_to_resolution):
+                skip_reason = "resolution_cutoff"
+
+            placed_this_tick = []
+            if skip_reason:
+                logger.log(
+                    "skip_quote" if skip_reason != "trading_off" else "trading_paused",
+                    reason=trading_reason if skip_reason == "trading_off" else skip_reason,
+                    market=snap.slug,
+                    score=format_score(snap.risk_score),
+                    live=False,
+                    demo=True,
+                )
+            else:
                 desired = maker.desired_quotes(snap, port, config, f"d{tick}")
-                placed_this_tick: list[PaperOrder] = []
                 for order in desired:
                     side = "bid" if order.side == "buy" else "ask"
                     bal = {}
@@ -374,12 +449,16 @@ def run_demo_session(
                 avail = _balance_available(bal)
                 if avail is not None:
                     port.cash = avail
+                mids = {snap.slug: snap.mid}
+                for slug, pos in port.positions.items():
+                    if slug not in mids or mids[slug] is None:
+                        mids[slug] = pos.avg_price or None
                 equity = _account_value_from_exchange(
-                    bal, position_snapshots[-1] if position_snapshots else {}, {snap.slug: snap.mid}
+                    bal, position_snapshots[-1] if position_snapshots else {}, mids
                 )
                 if equity <= 0:
                     equity = port.cash
-                at_risk, frac = snapshot_account_risk(port, [], equity)
+                at_risk, frac = snapshot_account_risk(port, placed_this_tick, equity)
                 last_risk = {
                     "at_risk": at_risk,
                     "equity": equity,
@@ -397,7 +476,7 @@ def run_demo_session(
                     live=False,
                     demo=True,
                 )
-                port.record_equity({snap.slug: snap.mid})
+                port.record_equity(mids)
             except DemoOrderError as exc:
                 logger.log("balance_error", error=str(exc), live=False)
 
@@ -406,7 +485,10 @@ def run_demo_session(
     finally:
         lock.release()
         try:
-            remaining = client.shutdown_demo_orders(confirm_demo=True)
+            try:
+                remaining = client.shutdown_demo_orders(confirm_demo=True, emergency_all=False)
+            except TypeError:
+                remaining = client.shutdown_demo_orders(confirm_demo=True)
         except DemoOrderError as exc:
             leftover_alert = str(exc)
             logger.log(
@@ -454,6 +536,9 @@ def run_demo_session(
         "trading": last_trading,
         "account_risk": last_risk,
         "account_risk_cap": format_risk_pct(config.paper.risk.max_account_risk_pct),
+        "market_risk_cap": format_score(config.paper.risk.max_market_risk_score),
+        "market_risk": last_scores,
+        "cancels_scoped": True,
     }
     logger.log(
         "demo_end",
@@ -483,7 +568,7 @@ def format_demo_report(state: dict[str, Any]) -> str:
         f"Ticks: {state.get('ticks')}    Market: {', '.join(state.get('markets') or []) or '(none)'}",
         "",
         f"Quotes placed: {state.get('quotes_placed', 0)}",
-        f"Cancel-all rounds: {state.get('cancels', 0)}",
+        f"Bot-scoped cancel rounds: {state.get('cancels', 0)}",
         f"Fills reported by demo API: {state.get('fill_count', 0)}",
         f"Starting balance/cash: {_money(state.get('starting_cash'))}",
         f"Ending balance/cash: {_money(state.get('ending_cash'))}",
@@ -492,16 +577,34 @@ def format_demo_report(state: dict[str, Any]) -> str:
             f"Account risk: {(state.get('account_risk') or {}).get('pct_display', 'n/a')} "
             f"(cap {state.get('account_risk_cap') or 'n/a'})"
         ),
+        f"Market risk cap: {state.get('market_risk_cap') or '40.0%'}",
         "",
-        "Positions",
+        "Market risk scores",
     ]
+    scores = state.get("market_risk") or {}
+    if scores:
+        for slug, payload in scores.items():
+            display = (payload or {}).get("score_display") or (payload or {}).get("score") or "-"
+            comps = (payload or {}).get("components") or {}
+            live = " live-game" if comps.get("live_game") else ""
+            lines.append(f"  {slug}: {display}{live}")
+    else:
+        lines.append("  (none)")
+    lines.extend(["", "Positions"])
     if pos_rows:
         for row in pos_rows:
             ticker = row.get("ticker") or row.get("market_ticker") or "?"
             qty = row.get("position") or row.get("quantity") or row.get("qty")
-            lines.append(f"  {ticker}: qty={qty}")
+            avg = row.get("average_price") or row.get("avg_price") or row.get("avg_px")
+            extra = f" avg={avg}" if avg is not None else ""
+            lines.append(f"  {ticker}: qty={qty}{extra}")
     else:
-        lines.append("  (flat or none reported)")
+        maker_pos = ((state.get("maker") or {}).get("positions") or {})
+        if maker_pos:
+            for ticker, pos in maker_pos.items():
+                lines.append(f"  {ticker}: qty={pos.get('qty')} avg={pos.get('avg_price')}")
+        else:
+            lines.append("  (flat or none reported)")
     fills = state.get("fills") or []
     lines.append("")
     lines.append("Fills")

@@ -5,7 +5,7 @@ from polymarket_bot.config import load_config
 from polymarket_bot.exchanges.kalshi import snapshot_from_kalshi
 from polymarket_bot.market_data.errors import BookFetchError
 from polymarket_bot.market_data.fixture_client import FixtureClient
-from polymarket_bot.scanner import is_liquid, liquidity_score, scan_markets, scan_near_resolution
+from polymarket_bot.scanner import format_scan_table, is_liquid, liquidity_score, scan_markets, scan_near_resolution
 
 
 def test_scan_fixtures_returns_liquid_rows():
@@ -17,6 +17,9 @@ def test_scan_fixtures_returns_liquid_rows():
     assert all(is_liquid(s, cfg.scanner) for s in rows)
     assert all(s.spread is not None and s.spread <= cfg.scanner.max_spread for s in rows)
     assert all(s.book_fetched and not s.stale for s in rows)
+    assert all(s.risk_score is not None for s in rows)
+    table = format_scan_table(rows)
+    assert "risk" in table.splitlines()[0]
 
 
 def test_illiquid_wide_spread_filtered():

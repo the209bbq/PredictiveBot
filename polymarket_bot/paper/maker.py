@@ -8,6 +8,7 @@ from polymarket_bot.config import AppConfig
 from polymarket_bot.fees import MAX_PRICE, MIN_PRICE
 from polymarket_bot.market_data import MarketSnapshot
 from polymarket_bot.paper.portfolio import PaperOrder, Portfolio
+from polymarket_bot.market_risk import attach_market_risk, is_live_in_game, market_over_risk_threshold
 from polymarket_bot.paper.risk import (
     account_value_from_portfolio,
     past_resolution_cutoff,
@@ -46,7 +47,13 @@ def desired_quotes(
         return []
     if snap.mid is None or snap.best_bid is None or snap.best_ask is None:
         return []
+    if is_live_in_game(snap):
+        return []
     if past_resolution_cutoff(snap, config.paper.risk.maker_min_hours_to_resolution):
+        return []
+    if snap.risk_score is None:
+        attach_market_risk(snap)
+    if market_over_risk_threshold(snap, config.paper.risk.max_market_risk_score):
         return []
 
     tick = snap.tick_size or config.paper.tick_size_fallback

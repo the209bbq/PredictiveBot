@@ -8,16 +8,17 @@ This is a personal research tool, not financial advice. Prediction-market tradin
 
 ## What it does
 
-1. **Read-only scanner** — pages through Kalshi `/markets` (or Polymarket US), ranks by volume / open interest / liquidity / book depth, then fetches a small number of books. Reports mid, spread, depth, volume, hours to event. Kalshi hours use the earlier of `expected_expiration_time` and `close_time` (official close is often well after the event). Trading hours come from `GET /exchange/schedule`.
+1. **Read-only scanner** — pages through Kalshi `/markets` (or Polymarket US), ranks by volume / open interest / liquidity / book depth, then fetches a small number of books. Reports mid, spread, **risk score**, depth, volume, hours to event. Kalshi hours use the earliest of `occurrence_datetime`, `expected_expiration_time`, and `close_time` (kickoff / event time, not a late official close). Trading hours come from `GET /exchange/schedule`.
 2. **Venue fee models**
    - **Kalshi** (fee schedule PDF + series `fee_type` on docs.kalshi.com): taker `round_up(M × 0.07 × C × P × (1−P))` to the next cent per order. Makers are free unless the series is `quadratic_with_maker_fees` (`0.0175`) or `quadratic_with_combo_maker_fees` (`0.035`).
    - **Polymarket US** (docs.polymarket.us/fees, effective 25 Sep 2026): taker `0.0695 × C × p × (1−p)`, maker rebate `0.0125 × C × p × (1−p)`, banker's rounding.
 3. **Paper maker strategy** — spread-aware resting quotes: join the touch on a 1–2 tick book, improve by `improve_ticks` when the book is wider, inventory-skewed, never lock or cross (maker-only). Fills only on a strict trade-through or book cross-through. Kalshi last-trade is refreshed each live tick so trade-throughs can fire. Stale / unfetched books are not quoted or filled.
 4. **Paper near-resolution favorites** — own universe selected by hours-to-event (not the far-dated maker scan). Resting bids on ~94–98¢ contracts. Isolated book and P&L.
-5. **Risk** — per-market and gross caps, daily-loss kill switch, cancel on mid jump, resolution cutoff, and a **total account-risk cap** (default and hard max 40% of cash + MTM). At-risk is worst-case loss on open positions plus every resting order if it filled (YES buy at `p` → `p` per contract; sell/NO → `1-p`). An order that would push the total over the cap is rejected. Setting `max_account_risk_pct` above `0.40` is refused unless `allow_account_risk_above_hard_max: true`. The current risk percentage is logged and printed on the session report.
-6. **Trading toggle** — `pmbot trading off` / `on` / `status` writes a small state file (AND'd with `trading.enabled` in config). Checked every loop iteration. When off, the bot cancels resting orders, stops quoting, and keeps running read-only. Only one trading process may run at a time (PID/flock lock).
-7. **Cross-venue comparison** — read-only match of similar events on Kalshi and Polymarket US, with the price gap **after both venues' taker fees**. `compare.min_net_edge` is **dollars per contract**, not a dollar total on `contract_size` contracts. Alerts only; it never trades the gap. Failed book fetches are skipped (no list-price fallback).
-8. **Kalshi demo session (opt-in)** — `pmbot kalshi-demo --confirm-demo` runs a quote / re-quote / cancel loop on the demo host, tracks balance / positions / fills, writes a session report, then cancel-all + verifies no resting orders remain (loud alert if any do). `pmbot kalshi-demo-order` still places a single demo order. Production URLs are refused. Signing auto-detects Ed25519 vs RSA.
+5. **Per-market RISK SCORE (primary)** — each market gets a 0–1 score (shown as 0–100%) from recent mid volatility, jump size, spread width, book thinness, time-to-event urgency, 50/50 proximity on news-driven events, and a live-game floor of 0.95. Computed every loop. The bot only quotes markets **strictly below** `max_market_risk_score` (default `0.40`; hard max `0.50` unless `allow_market_risk_above_hard_max: true`). When a score rises to the threshold, existing quotes are cancelled and no new ones are placed. Live in-game sports (GAME tickers, vs/sports, in-progress phrases, kickoff already started, or same-day GAME) score at least 95%.
+6. **Account-exposure cap (secondary)** — never more than a configurable fraction of account value at risk (default 40%, adjustable; hard max 40% unless `allow_account_risk_above_hard_max: true`). At-risk is worst-case loss on **all existing account positions** (including leftovers from earlier sessions) plus every resting order if it filled (YES buy at `p` → `p` per contract; sell/NO → `1-p`). An order that would push the total over the cap is rejected. The current risk percentage is logged and printed on the session report. Per-market and gross caps, daily-loss kill switch, cancel on mid jump, and `maker_min_hours_to_resolution` still apply (hours include kickoff).
+7. **Trading toggle** — `pmbot trading off` / `on` / `status` writes a small state file (AND'd with `trading.enabled` in config). Checked every loop iteration. When off, the bot cancels **its own** resting orders, stops quoting, and keeps running read-only. Only one trading process may run at a time (PID/flock lock).
+8. **Cross-venue comparison** — read-only match of similar events on Kalshi and Polymarket US, with the price gap **after both venues' taker fees**. `compare.min_net_edge` is **dollars per contract**, not a dollar total on `contract_size` contracts. Alerts only; it never trades the gap. Failed book fetches are skipped (no list-price fallback).
+9. **Kalshi demo session (opt-in)** — `pmbot kalshi-demo --confirm-demo` runs a quote / re-quote / cancel loop on the demo host, tracks balance / **all account positions** / fills, writes a session report with per-market risk scores, then cancels **only orders this bot placed** (`client_order_id` prefix `pmbot-` / tracked IDs) and verifies those are gone (loud alert if any remain). Account-wide `DELETE /portfolio/events/orders` is **emergency only**: `pmbot kalshi-demo --confirm-demo --emergency-cancel-all`. `pmbot kalshi-demo-order` still places a single demo order. Production URLs are refused. Signing auto-detects Ed25519 vs RSA.
 
 ## Setup
 
@@ -95,11 +96,13 @@ python -m polymarket_bot trading status
 python -m polymarket_bot trading on
 ```
 
-Kalshi **demo session** (quote / re-quote / cancel, then verify no resting orders). Requires the env vars above, `kalshi.demo_orders_enabled: true`, and `--confirm-demo`. Uses demo books so tickers exist on the demo host:
+Kalshi **demo session** (quote / re-quote / cancel **this bot's** orders, then verify those are gone). Requires the env vars above, `kalshi.demo_orders_enabled: true`, and `--confirm-demo`. Uses demo books so tickers exist on the demo host:
 
 ```bash
 python -m polymarket_bot kalshi-demo --confirm-demo --ticks 4 --no-sleep
 python -m polymarket_bot kalshi-demo --confirm-demo --ticker SOME-DEMO-TICKER --ticks 4
+# Emergency only — cancels every resting order on the demo account:
+python -m polymarket_bot kalshi-demo --confirm-demo --emergency-cancel-all
 ```
 
 Single demo order (same safety rails):
@@ -126,7 +129,7 @@ pytest
 - Kalshi demo orders require `kalshi.demo_orders_enabled: true`, `--confirm-demo`, and a demo host (`https://demo-api.kalshi.co/trade-api/v2`; `external-api.demo.kalshi.co` is a documented fallback). Production hosts are refused.
 - Demo keys come from env vars only (see above). Never committed.
 - Paper quotes never leave the process. Polymarket US has no order path at all.
-- Signed demo calls retry 429 and 5xx with backoff and a fresh timestamp. Shutdown uses cancel-all (plus batch cancel if anything remains) and errors loudly if resting orders are still open.
+- Signed demo calls retry 429 and 5xx with backoff and a fresh timestamp. Shutdown cancels **this bot's** orders (`pmbot-` client IDs / tracked order IDs), then errors loudly if any of those remain. Account-wide cancel-all is `--emergency-cancel-all` only.
 - Failed live books are marked `stale` and are not used for quotes, simulated fills, or compare alerts.
 
 ## Data sources (verified)
@@ -141,7 +144,7 @@ pytest
 | Order book | YES bids and NO bids only. A NO bid at `p` is a YES ask at `1−p`. |
 | Last trade | `GET /markets/trades?ticker=…&limit=1`. List `last_price_dollars` is often stale; live paper refreshes this each tick. |
 | Auth | `KALSHI-ACCESS-KEY` / `TIMESTAMP` / `SIGNATURE`. Auto-detects Ed25519 (sign the pre-sign text directly) vs RSA-PSS SHA-256. Path includes `/trade-api/v2` and excludes the query string. Official SDKs are RSA-only. |
-| Demo orders | `POST /portfolio/events/orders` (Create Order V2). Cancel-all: `DELETE /portfolio/events/orders`. Batch: `DELETE /portfolio/events/orders/batched`. |
+| Demo orders | `POST /portfolio/events/orders` (Create Order V2) with `client_order_id` prefix `pmbot-`. Normal cancel: batch/individual on those IDs only. Emergency cancel-all: `DELETE /portfolio/events/orders`. Batch: `DELETE /portfolio/events/orders/batched`. |
 | Rate limits | Token buckets. Basic: 200 read / 100 write tokens per second; most calls cost 10 tokens. 429 body `{"error":"too many requests"}`, **no Retry-After**. Client retries 429 and 5xx with exponential backoff. |
 | Fees | Taker `round_up(0.07 × C × P × (1−P))` to the cent. Maker $0 unless the series has maker fees. |
 
@@ -165,7 +168,9 @@ Demo market prices may not match production. Scanner/paper default to **producti
 - `scanner.max_book_fetches` — books fetched after ranking (keep this small on Polymarket US).
 - `paper.maker.improve_ticks` — ticks to improve inside a wide book; 1–2 tick books join the touch.
 - `compare.min_net_edge` — **dollars per contract** after taker fees. `compare.contract_size` is only the clip used to print dollar totals.
-- `paper.risk.max_account_risk_pct` — fraction of account value that may be at risk (default/hard max `0.40`). Override only with `allow_account_risk_above_hard_max: true`.
+- `paper.risk.max_market_risk_score` — per-market score gate (default `0.40`, hard max `0.50`). Override only with `allow_market_risk_above_hard_max: true`. Components: volatility, jump, spread, thin book, urgency, coin-flip (news), live-game floor 0.95.
+- `paper.risk.max_account_risk_pct` — secondary exposure cap (default `0.40`). Override the 40% hard max only with `allow_account_risk_above_hard_max: true`. Counts leftover account positions.
+- `paper.risk.maker_min_hours_to_resolution` — maker cutoff using the earliest of kickoff / expected expiration / close.
 - `trading.enabled` / `toggle_path` / `lock_path` — config master switch, CLI toggle file, and single-process lock.
 
 ## What would be needed for Kalshi or Polymarket production (not enabled)

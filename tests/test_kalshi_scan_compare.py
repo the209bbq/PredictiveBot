@@ -75,6 +75,27 @@ def test_title_score_and_compare_synthetic():
     assert gaps[0].per_contract_buy_k_sell_p == gaps[0].buy_kalshi_sell_pm / cfg.compare.contract_size
 
 
+def test_hours_use_occurrence_datetime_not_late_close():
+    now = datetime(2026, 9, 28, 22, 0, tzinfo=timezone.utc)
+    snap = snapshot_from_kalshi(
+        {
+            "ticker": "KXNFLGAME-26SEP28PHICHI-CHI",
+            "title": "Eagles vs Bears",
+            "status": "active",
+            "yes_bid_dollars": "0.49",
+            "yes_ask_dollars": "0.51",
+            "occurrence_datetime": "2026-09-29T02:00:00Z",
+            "expected_expiration_time": "2026-09-29T06:00:00Z",
+            "close_time": "2026-09-29T08:00:00Z",
+        },
+        None,
+        now=now,
+    )
+    assert snap.hours_to_resolution is not None
+    assert 3.5 < snap.hours_to_resolution < 4.5
+    assert snap.hours_to_resolution < 6
+
+
 def test_hours_use_expected_expiration_not_late_close():
     now = datetime(2026, 9, 28, tzinfo=timezone.utc)
     snap = snapshot_from_kalshi(

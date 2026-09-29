@@ -69,6 +69,8 @@ def test_replay_paper_run_produces_fills_and_report(tmp_path):
     assert "Near-resolution" in report
     assert "Net P&L" in report
     assert "Max drawdown" in report
+    assert "Market risk" in report
+    assert state.get("market_risk")
 
 
 class _LiveFake:

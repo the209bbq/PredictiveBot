@@ -15,6 +15,13 @@ from polymarket_bot.market_data.replay_client import ReplayClient
 from polymarket_bot.paper import maker, near_resolution
 from polymarket_bot.paper.fills import fill_reason
 from polymarket_bot.paper.portfolio import PaperOrder, Portfolio
+from polymarket_bot.market_risk import (
+    PriceHistory,
+    attach_market_risk,
+    format_score,
+    market_over_risk_threshold,
+    score_payload,
+)
 from polymarket_bot.paper.risk import (
     account_value_from_portfolio,
     check_daily_loss,
@@ -145,6 +152,8 @@ def _run_paper_locked(
     near_book: list[PaperOrder] = []
     prev: dict[str, MarketSnapshot] = {}
     last_risk: dict[str, dict[str, Any]] = {}
+    last_scores: dict[str, dict[str, Any]] = {}
+    history = PriceHistory()
     logger.log(
         "paper_start",
         source=client.source_name,
@@ -175,7 +184,16 @@ def _run_paper_locked(
             chosen = universe
 
         for snap in universe:
+            attach_market_risk(snap, history)
             snaps[snap.slug] = snap
+            last_scores[snap.slug] = score_payload(snap)
+            logger.log(
+                "market_risk",
+                market=snap.slug,
+                score=format_score(snap.risk_score),
+                live_game=bool((snap.risk_components or {}).get("live_game")),
+                live=False,
+            )
 
         mids = _mids(snaps)
         for port in (maker_port, near_port):
@@ -206,6 +224,16 @@ def _run_paper_locked(
                         strategy=order.strategy,
                         market=order.market,
                         reason="stale_book",
+                        live=False,
+                    )
+                    continue
+                if market_over_risk_threshold(snap, config.paper.risk.max_market_risk_score):
+                    logger.log(
+                        "cancel",
+                        strategy=order.strategy,
+                        market=order.market,
+                        reason="market_risk_score",
+                        score=format_score(snap.risk_score),
                         live=False,
                     )
                     continue
@@ -355,6 +383,8 @@ def _run_paper_locked(
         "trading": "on" if trading_on else "off",
         "trading_reason": trading_reason,
         "account_risk_cap": format_risk_pct(config.paper.risk.max_account_risk_pct),
+        "market_risk_cap": format_score(config.paper.risk.max_market_risk_score),
+        "market_risk": last_scores,
     }
     logger.log("paper_end", live=False, maker_pnl=state["maker"]["net_pnl"], near_pnl=state["near_resolution"]["net_pnl"])
     return state

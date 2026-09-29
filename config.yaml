@@ -74,10 +74,15 @@ paper:
     max_daily_loss: 25.00
     cancel_on_price_jump: 0.08
     maker_min_hours_to_resolution: 6
-    # Worst-case $ at risk / account value. Default and hard max 40%.
+    # Worst-case $ at risk / account value. Secondary safeguard; default 40%.
     max_account_risk_pct: 0.40
     # Required to set max_account_risk_pct above 0.40.
     allow_account_risk_above_hard_max: false
+    # Per-market RISK SCORE 0–1 (100% = extremely volatile / live). Primary gate.
+    # Only quote markets strictly below this. Default 0.40; hard max 0.50.
+    max_market_risk_score: 0.40
+    # Required to set max_market_risk_score above 0.50.
+    allow_market_risk_above_hard_max: false
   fills:
     require_strict_trade_through: true
 

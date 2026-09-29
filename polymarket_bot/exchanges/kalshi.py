@@ -27,6 +27,7 @@ from polymarket_bot.market_data.errors import BookFetchError
 from polymarket_bot.market_data.normalize import depth_from_levels, hours_to_resolution
 
 _RETRY_STATUSES = {429, 500, 502, 503, 504}
+CLIENT_ORDER_PREFIX = "pmbot-"
 
 ONE = Decimal("1")
 
@@ -75,9 +76,10 @@ def snapshot_from_kalshi(
     volume = as_decimal(market.get("volume_24h_fp")) or as_decimal(market.get("volume_fp"))
     close_date = as_datetime(market.get("close_time"))
     event_date = as_datetime(market.get("expected_expiration_time"))
-    # Official close is often hours after the event. Use the earlier timestamp
-    # so near-resolution and cutoffs track the event, not settlement.
-    candidates = [dt for dt in (event_date, close_date) if dt is not None]
+    kickoff = as_datetime(market.get("occurrence_datetime"))
+    # Official close is often hours after the event. Use the earliest of
+    # kickoff / expected expiration / close so live games are not treated as far-dated.
+    candidates = [dt for dt in (kickoff, event_date, close_date) if dt is not None]
     end_date = min(candidates) if candidates else None
     list_bid_sz = as_decimal(market.get("yes_bid_size_fp")) or Decimal("0")
     list_ask_sz = as_decimal(market.get("yes_ask_size_fp")) or Decimal("0")
@@ -136,6 +138,7 @@ class KalshiClient:
             headers={"User-Agent": "PredictiveBot/0.2 (read-only)"},
         )
         self.source_name = f"Kalshi Trade API v2 ({self.data_base_url}, unauthenticated market data)"
+        self._bot_order_ids: set[str] = set()
 
     def _pace(self) -> None:
         now = time.monotonic()
@@ -283,8 +286,10 @@ class KalshiClient:
         count: str,
         confirm_demo: bool,
         post_only: bool = True,
+        client_order_id: str | None = None,
     ) -> dict[str, Any]:
-        return self.signed_demo(
+        cid = client_order_id or f"{CLIENT_ORDER_PREFIX}{uuid.uuid4().hex}"
+        result = self.signed_demo(
             "POST",
             "/portfolio/events/orders",
             confirm_demo=confirm_demo,
@@ -296,9 +301,14 @@ class KalshiClient:
                 "time_in_force": "good_till_canceled",
                 "self_trade_prevention_type": "taker_at_cross",
                 "post_only": post_only,
-                "client_order_id": str(uuid.uuid4()),
+                "client_order_id": cid,
             },
         )
+        order = result.get("order") if isinstance(result.get("order"), dict) else result
+        oid = order.get("order_id") or order.get("id")
+        if oid:
+            self._bot_order_ids.add(str(oid))
+        return result
 
     def cancel_demo_order(self, order_id: str, *, ticker: str | None, confirm_demo: bool) -> dict[str, Any]:
         params = {"market_ticker": ticker} if ticker else None
@@ -310,8 +320,38 @@ class KalshiClient:
         )
 
     def cancel_all_demo_orders(self, *, confirm_demo: bool) -> dict[str, Any]:
-        """DELETE /portfolio/events/orders — cancel every resting demo order."""
+        """Emergency only: DELETE /portfolio/events/orders — every resting order on the account."""
         return self.signed_demo("DELETE", "/portfolio/events/orders", confirm_demo=confirm_demo)
+
+    def is_bot_order(self, row: dict[str, Any]) -> bool:
+        cid = str(row.get("client_order_id") or "")
+        oid = str(row.get("order_id") or row.get("id") or "")
+        if cid.startswith(CLIENT_ORDER_PREFIX):
+            return True
+        return bool(oid and oid in self._bot_order_ids)
+
+    def list_bot_demo_orders(self, *, status: str = "resting", confirm_demo: bool) -> list[dict[str, Any]]:
+        return [row for row in self.list_demo_orders(status=status, confirm_demo=confirm_demo) if self.is_bot_order(row)]
+
+    def cancel_bot_demo_orders(self, *, confirm_demo: bool) -> dict[str, Any]:
+        """Cancel only orders this bot placed (client_order_id prefix or tracked IDs)."""
+        mine = self.list_bot_demo_orders(status="resting", confirm_demo=confirm_demo)
+        batch = [
+            {"order_id": str(row.get("order_id") or row.get("id")), "market_ticker": str(row.get("ticker") or "")}
+            for row in mine
+            if row.get("order_id") or row.get("id")
+        ]
+        if not batch:
+            return {"cancelled": 0}
+        try:
+            self.batch_cancel_demo_orders(batch, confirm_demo=confirm_demo)
+        except DemoOrderError:
+            for item in batch:
+                try:
+                    self.cancel_demo_order(item["order_id"], ticker=item.get("market_ticker"), confirm_demo=confirm_demo)
+                except DemoOrderError:
+                    continue
+        return {"cancelled": len(batch)}
 
     def batch_cancel_demo_orders(
         self,
@@ -350,19 +390,31 @@ class KalshiClient:
         )
         return list(payload.get("fills") or payload.get("market_positions") or [])
 
-    def shutdown_demo_orders(self, *, confirm_demo: bool) -> list[dict[str, Any]]:
-        """Cancel-all with retries, then verify no resting orders remain."""
+    def shutdown_demo_orders(
+        self,
+        *,
+        confirm_demo: bool,
+        emergency_all: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Cancel this bot's resting orders (or the whole account if emergency_all)."""
         last_error = None
         for _ in range(4):
             try:
-                self.cancel_all_demo_orders(confirm_demo=confirm_demo)
+                if emergency_all:
+                    self.cancel_all_demo_orders(confirm_demo=confirm_demo)
+                else:
+                    self.cancel_bot_demo_orders(confirm_demo=confirm_demo)
                 last_error = None
                 break
             except DemoOrderError as exc:
                 last_error = exc
                 time.sleep(1.0)
-        remaining = self.list_demo_orders(status="resting", confirm_demo=confirm_demo)
-        if remaining:
+        remaining = (
+            self.list_demo_orders(status="resting", confirm_demo=confirm_demo)
+            if emergency_all
+            else self.list_bot_demo_orders(status="resting", confirm_demo=confirm_demo)
+        )
+        if remaining and not emergency_all:
             batch = [
                 {"order_id": row.get("order_id"), "market_ticker": row.get("ticker")}
                 for row in remaining
@@ -373,10 +425,10 @@ class KalshiClient:
                     self.batch_cancel_demo_orders(batch, confirm_demo=confirm_demo)
                 except DemoOrderError as exc:
                     last_error = exc
-                remaining = self.list_demo_orders(status="resting", confirm_demo=confirm_demo)
+                remaining = self.list_bot_demo_orders(status="resting", confirm_demo=confirm_demo)
         if remaining:
             raise DemoOrderError(
-                "ALERT: resting Kalshi DEMO orders remain after cancel-all. "
+                "ALERT: resting Kalshi DEMO orders this bot placed remain after cancel. "
                 f"Count={len(remaining)} last_error={last_error} "
                 f"ids={[row.get('order_id') for row in remaining]}"
             )

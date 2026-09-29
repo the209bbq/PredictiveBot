@@ -62,6 +62,20 @@ def format_report(state: dict[str, Any]) -> str:
         f"Ticks: {state.get('ticks')}    Markets: {', '.join(state.get('markets') or []) or '(none)'}",
         f"Trading: {state.get('trading') or 'on'}",
         f"Account risk cap: {state.get('account_risk_cap') or '40.00%'}",
+        f"Market risk cap: {state.get('market_risk_cap') or '40.0%'}",
+        "",
+        "Market risk scores",
+    ]
+    scores = state.get("market_risk") or {}
+    if scores:
+        for slug, payload in scores.items():
+            display = (payload or {}).get("score_display") or (payload or {}).get("score") or "-"
+            comps = (payload or {}).get("components") or {}
+            live = " live-game" if comps.get("live_game") else ""
+            lines.append(f"  {slug}: {display}{live}")
+    else:
+        lines.append("  (none)")
+    lines.extend([
         "",
         "Maker-only quotes around mid",
         format_strategy(maker),
@@ -76,5 +90,5 @@ def format_report(state: dict[str, Any]) -> str:
         "",
         "Fills are simulated conservatively (trade-through or book-cross only).",
         "Kalshi maker cash is usually $0 (or a maker fee); Polymarket US credits a rebate.",
-    ]
+    ])
     return "\n".join(lines) + "\n"

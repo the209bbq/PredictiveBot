@@ -11,6 +11,7 @@ from polymarket_bot.account_risk import AccountRiskError, format_risk_pct
 from polymarket_bot.compare import collect_snapshots, compare_snapshots, format_compare_report
 from polymarket_bot.config import load_config
 from polymarket_bot.demo.session import assert_demo_order_within_risk, format_demo_report, run_demo_session
+from polymarket_bot.market_risk import MarketRiskError, format_score
 from polymarket_bot.exchanges.factory import build_client
 from polymarket_bot.exchanges.kalshi import KalshiClient
 from polymarket_bot.guard import DemoOrderError, LiveTradingDisabled
@@ -58,6 +59,9 @@ def cmd_scan(args: argparse.Namespace) -> int:
                 "ask_depth": s.ask_depth_contracts,
                 "volume_shares": s.volume_shares,
                 "hours_to_resolution": s.hours_to_resolution,
+                "risk_score": s.risk_score,
+                "risk_score_display": format_score(s.risk_score),
+                "risk_components": dict(s.risk_components or {}),
             }
             for s in rows
         ]
@@ -155,6 +159,20 @@ def cmd_kalshi_demo_session(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     # Books and orders both hit the demo host so tickers exist there.
     client = KalshiClient(config, data_base_url=config.kalshi.demo_base_url)
+    if getattr(args, "emergency_cancel_all", False):
+        lock = TradingLock(config.trading.lock_path)
+        try:
+            lock.acquire()
+            remaining = client.shutdown_demo_orders(
+                confirm_demo=args.confirm_demo,
+                emergency_all=True,
+            )
+        finally:
+            lock.release()
+            client.close()
+        print("Emergency account-wide cancel completed (every resting DEMO order).")
+        print(f"Resting leftover: {remaining or 'none'}")
+        return 0
     logger = DecisionLogger(Path("logs/demo_decisions.jsonl"), config.logging.level)
     try:
         state = run_demo_session(
@@ -259,6 +277,11 @@ def build_parser() -> argparse.ArgumentParser:
     demo_session.add_argument("--ticks", type=int, default=None)
     demo_session.add_argument("--no-sleep", action="store_true")
     demo_session.add_argument("--confirm-demo", action="store_true")
+    demo_session.add_argument(
+        "--emergency-cancel-all",
+        action="store_true",
+        help="Cancel EVERY resting order on the demo account (not just this bot's). Emergency only.",
+    )
     demo_session.set_defaults(func=cmd_kalshi_demo_session)
 
     trading = sub.add_parser("trading", help="Turn order placement on or off without a code change")
@@ -275,6 +298,13 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return int(args.func(args))
-    except (LiveTradingDisabled, DemoOrderError, TradingLockHeld, TradingPaused, AccountRiskError) as exc:
+    except (
+        LiveTradingDisabled,
+        DemoOrderError,
+        TradingLockHeld,
+        TradingPaused,
+        AccountRiskError,
+        MarketRiskError,
+    ) as exc:
         print(str(exc), file=sys.stderr)
         return 2
