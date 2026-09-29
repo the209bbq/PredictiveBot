@@ -20,7 +20,8 @@ def format_strategy(block: dict[str, Any]) -> str:
         f"  Net P&L (mark-to-market, net of maker rebates): {_money(block.get('net_pnl'))}",
         f"  Realized P&L: {_money(block.get('realized_pnl'))}",
         f"  Maker fees/rebates (signed): {_money(block.get('rebates'))}",
-        f"  Fills: {block.get('fill_count', 0)}",
+        f"  Fills: {block.get('fill_count', 0)}"
+        + (f"  (same_day={block.get('same_day_fills')})" if block.get("same_day_fills") else ""),
         f"  Max drawdown: {_money(block.get('max_drawdown'))}",
         f"  Ending equity: {_money(block.get('equity'))}   cash {_money(block.get('cash'))}",
         f"  Gross inventory (contracts): {block.get('gross_position')}",
@@ -63,9 +64,25 @@ def format_report(state: dict[str, Any]) -> str:
         f"Trading: {state.get('trading') or 'on'}",
         f"Account risk cap: {state.get('account_risk_cap') or '40.00%'}",
         f"Market risk cap: {state.get('market_risk_cap') or '40.0%'}",
+    ]
+    daily = state.get("daily_limits") or {}
+    if daily or state.get("daily_loss_limit_hit"):
+        hit = daily.get("daily_loss_limit_hit") or state.get("daily_loss_limit_hit")
+        lines.append(
+            f"Daily capital in use: {_money(daily.get('daily_capital_in_use_usd'))} / "
+            f"{_money(daily.get('max_daily_capital_in_use_usd'))}"
+        )
+        lines.append(
+            "Daily P&L (PT): "
+            + ("daily loss limit hit" if hit else _money(daily.get("daily_pnl_usd")))
+            + f" / limit -{_money(daily.get('max_daily_loss_usd'))}"
+        )
+    lines.extend(
+        [
         "",
         "Market risk scores",
     ]
+    )
     scores = state.get("market_risk") or {}
     if scores:
         for slug, payload in scores.items():

@@ -60,6 +60,12 @@ def trading_is_on(config: AppConfig) -> tuple[bool, str]:
 def trading_status(config: AppConfig) -> dict[str, Any]:
     on, reason = trading_is_on(config)
     file_flag = read_toggle(config.trading.toggle_path)
+    from polymarket_bot.daily_limits import empty_limits
+
+    daily = empty_limits(config)
+    if daily.loss_halted and on:
+        on = False
+        reason = "daily_loss_limit"
     return {
         "effective": "on" if on else "off",
         "reason": reason,
@@ -67,6 +73,12 @@ def trading_status(config: AppConfig) -> dict[str, Any]:
         "toggle_path": str(config.trading.toggle_path),
         "toggle_file": None if file_flag is None else ("on" if file_flag else "off"),
         "lock_path": str(config.trading.lock_path),
+        "daily_capital_in_use_usd": daily.capital_in_use,
+        "max_daily_capital_in_use_usd": daily.capital_limit,
+        "daily_pnl_usd": daily.day_pnl,
+        "max_daily_loss_usd": daily.loss_limit,
+        "daily_loss_limit_hit": daily.loss_halted,
+        "pt_date": daily.pt_date,
     }
 
 

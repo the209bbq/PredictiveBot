@@ -126,6 +126,8 @@ def test_trading_cli_status_on_off(tmp_path, monkeypatch, capsys):
     assert main(["--config", str(cfg_path), "trading", "status"]) == 0
     out = capsys.readouterr().out
     assert "Trading: off" in out
+    assert "Daily capital in use:" in out
+    assert "Daily P&L" in out
     assert main(["--config", str(cfg_path), "trading", "on"]) == 0
     assert read_toggle(toggle) is True
     assert trading_status(load_config(cfg_path))["effective"] == "on"

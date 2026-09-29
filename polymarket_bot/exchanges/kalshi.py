@@ -267,6 +267,53 @@ class KalshiClient:
         out.sort(key=lambda t: (t.ts or datetime.min.replace(tzinfo=timezone.utc), t.trade_id or ""))
         return out
 
+    def candlesticks(
+        self,
+        slug: str,
+        *,
+        start_ts: int | None = None,
+        end_ts: int | None = None,
+        period_interval: int = 1,
+    ) -> list[dict[str, Any]]:
+        """1-minute candles. Tries documented paths; empty list if unavailable."""
+        end_ts = int(end_ts if end_ts is not None else datetime.now(timezone.utc).timestamp())
+        start_ts = int(start_ts if start_ts is not None else end_ts - 3600)
+        params = {
+            "start_ts": start_ts,
+            "end_ts": end_ts,
+            "period_interval": period_interval,
+        }
+        attempts = (
+            (f"/markets/{slug}/candlesticks", params),
+            (
+                "/markets/candlesticks",
+                {**params, "ticker": slug, "market_ticker": slug},
+            ),
+        )
+        for path, query in attempts:
+            try:
+                payload = self._get(self.data_base_url, path, query)
+            except BookFetchError:
+                continue
+            rows = payload.get("candlesticks") or payload.get("candles") or []
+            out: list[dict[str, Any]] = []
+            for row in rows:
+                price = row.get("price") if isinstance(row.get("price"), dict) else row
+                ts = row.get("end_period_ts") or row.get("end_ts") or row.get("ts")
+                out.append(
+                    {
+                        "ts": ts,
+                        "open": str(price.get("open") or row.get("open") or ""),
+                        "high": str(price.get("high") or row.get("high") or ""),
+                        "low": str(price.get("low") or row.get("low") or ""),
+                        "close": str(price.get("close") or row.get("close") or ""),
+                        "volume": str(row.get("volume") or row.get("yes_volume") or "0"),
+                    }
+                )
+            if out:
+                return out
+        return []
+
     def snapshot(
         self,
         market: dict[str, Any],

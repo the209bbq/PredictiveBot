@@ -4,8 +4,13 @@ from decimal import Decimal
 from polymarket_bot.config import load_config
 from polymarket_bot.exchanges.kalshi import snapshot_from_kalshi
 from polymarket_bot.paper.maker import desired_quotes
-from polymarket_bot.paper.portfolio import Portfolio
-from polymarket_bot.series_filter import maker_universe_ok, touch_queue
+from polymarket_bot.paper.portfolio import PaperOrder, Portfolio
+from polymarket_bot.series_filter import (
+    is_kxhigh_same_day,
+    maker_min_hours,
+    maker_universe_ok,
+    touch_queue,
+)
 
 
 def _kalshi(ticker, **fields):
@@ -40,17 +45,21 @@ def test_allow_demo_and_deny_sports():
     assert not maker_universe_ok(_kalshi("KXNFLYARDS-COOPER", series="KXNFLYARDS", title="Cooper receiving yards"), cfg)
 
 
-def test_kxhigh_resolution_day_and_next_day():
+def test_kxhigh_same_day_off_by_default_opt_in():
     cfg = load_config()
+    assert cfg.paper.risk.kxhigh_resolution_day_enabled is False
     late = _kalshi("KXHIGHNY-29SEP26", series="KXHIGHNY", close="2026-09-29T13:00:00Z")
     morning = _kalshi("KXHIGHNY-29SEP26", series="KXHIGHNY", close="2026-09-29T18:00:00Z")
     nxt = _kalshi("KXHIGHNY-30SEP26", series="KXHIGHNY", close="2026-09-30T18:00:00Z")
-    assert late.hours_to_resolution is not None and late.hours_to_resolution < 4
     assert not maker_universe_ok(late, cfg)
-    assert morning.hours_to_resolution is not None and 4 <= morning.hours_to_resolution <= 12
-    assert maker_universe_ok(morning, cfg)
-    assert nxt.hours_to_resolution is not None and 12 <= nxt.hours_to_resolution <= 40
+    assert morning.hours_to_resolution is not None and morning.hours_to_resolution < 24
+    assert not maker_universe_ok(morning, cfg)
+    assert nxt.hours_to_resolution is not None and nxt.hours_to_resolution >= 24
     assert maker_universe_ok(nxt, cfg)
+    assert maker_min_hours(morning, cfg) == 24.0
+    cfg.extra["paper"]["series"]["kxhigh_resolution_day_enabled"] = True
+    assert maker_universe_ok(morning, cfg)
+    assert maker_min_hours(morning, cfg) == 4.0
 
 
 def test_kxrt_skips_extremes_and_btc15m_denied():
@@ -87,3 +96,18 @@ def test_touch_queue_and_maker_skips_denied():
     assert touch_queue(snap) == Decimal("80")
     port = Portfolio("maker", Decimal("1000"), Decimal("1000"))
     assert desired_quotes(snap, port, cfg, "t0") == []
+
+
+def test_kxhigh_same_day_fill_is_tagged():
+    morning = _kalshi("KXHIGHNY-29SEP26", series="KXHIGHNY", close="2026-09-29T18:00:00Z")
+    assert is_kxhigh_same_day(morning) is True
+    port = Portfolio("maker", Decimal("1000"), Decimal("1000"))
+    fill = port.apply_fill(
+        PaperOrder("1", morning.slug, "buy", Decimal("0.50"), Decimal("1"), "maker"),
+        Decimal("1"),
+        "trade_through",
+        same_day=True,
+    )
+    assert fill.same_day is True
+    assert port.to_dict()["same_day_fills"] == 1
+    assert port.to_dict()["fills"][0]["same_day"] is True

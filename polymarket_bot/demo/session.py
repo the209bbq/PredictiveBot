@@ -33,10 +33,12 @@ from polymarket_bot.market_risk import (
 )
 from polymarket_bot.paper import maker
 from polymarket_bot.paper.portfolio import PaperOrder, Portfolio
+from polymarket_bot.daily_limits import refresh_daily_limits
 from polymarket_bot.paper.risk import (
     past_resolution_cutoff,
     snapshot_account_risk,
     would_breach_account_risk,
+    would_breach_risk_limits,
 )
 from polymarket_bot.pnl import append_pnl
 from polymarket_bot.scanner import scan_markets
@@ -265,6 +267,12 @@ def assert_demo_order_within_risk(
             f"Order rejected: account risk {format_risk_pct(frac)} would exceed "
             f"cap {format_risk_pct(config.paper.risk.max_account_risk_pct)}."
         )
+    at_risk = total_at_risk(pos_map, orders)
+    if at_risk > config.paper.risk.max_daily_capital_in_use_usd:
+        raise AccountRiskError(
+            f"Order rejected: capital in use ${at_risk} would exceed "
+            f"${config.paper.risk.max_daily_capital_in_use_usd}."
+        )
     return frac
 
 
@@ -306,6 +314,7 @@ def run_demo_session(
     placed_this_tick: list[PaperOrder] = []
     last_quote_at: datetime | None = None
     prev_snap: MarketSnapshot | None = None
+    last_daily = None
 
     logger.log(
         "demo_start",
@@ -377,6 +386,37 @@ def run_demo_session(
             except DemoOrderError as exc:
                 logger.log("position_error", error=str(exc), live=False)
 
+            mids_now = {snap.slug: snap.mid}
+            equity_now = port.equity(mids_now)
+            at_risk_now, _ = snapshot_account_risk(port, placed_this_tick, equity_now)
+            last_daily = refresh_daily_limits(
+                config,
+                equity=equity_now,
+                capital_in_use=at_risk_now,
+                now=now_tick,
+            )
+            if last_daily.just_triggered:
+                logger.log(
+                    "ALERT",
+                    reason="daily_loss_limit",
+                    alert=True,
+                    daily_pnl=last_daily.day_pnl,
+                    limit=last_daily.loss_limit,
+                    live=False,
+                    demo=True,
+                )
+            if last_daily.loss_halted:
+                trading_on = False
+                trading_reason = "daily_loss_limit"
+                if not requote:
+                    try:
+                        canceller = getattr(client, "cancel_bot_demo_orders", None)
+                        if callable(canceller):
+                            canceller(confirm_demo=True)
+                        cancels += 1
+                    except DemoOrderError as exc:
+                        logger.log("cancel_error", error=str(exc), market=snap.slug, live=False)
+
             skip_reason = None
             if not trading_on:
                 skip_reason = "trading_off"
@@ -413,16 +453,17 @@ def run_demo_session(
                     )
                     if equity <= 0:
                         equity = port.cash
-                    if would_breach_account_risk(
+                    risk_reason = would_breach_risk_limits(
                         port,
                         placed_this_tick,
                         order,
                         equity,
-                        config.paper.risk.max_account_risk_pct,
-                    ):
+                        config.paper.risk,
+                    )
+                    if risk_reason:
                         logger.log(
                             "skip_quote",
-                            reason="account_risk_cap",
+                            reason=risk_reason,
                             market=snap.slug,
                             side=side,
                             live=False,
@@ -571,6 +612,8 @@ def run_demo_session(
         "market_risk_cap": format_score(config.paper.risk.max_market_risk_score),
         "market_risk": last_scores,
         "cancels_scoped": True,
+        "daily_limits": last_daily.as_dict() if last_daily else {},
+        "daily_loss_limit_hit": bool(last_daily and last_daily.loss_halted),
     }
     logger.log(
         "demo_end",
@@ -614,6 +657,20 @@ def format_demo_report(state: dict[str, Any]) -> str:
             f"(cap {state.get('account_risk_cap') or 'n/a'})"
         ),
         f"Market risk cap: {state.get('market_risk_cap') or '40.0%'}",
+        (
+            f"Daily capital in use: {_money((state.get('daily_limits') or {}).get('daily_capital_in_use_usd'))} / "
+            f"{_money((state.get('daily_limits') or {}).get('max_daily_capital_in_use_usd'))}"
+        ),
+        (
+            "Daily P&L (PT): "
+            + (
+                "daily loss limit hit"
+                if (state.get("daily_limits") or {}).get("daily_loss_limit_hit")
+                or state.get("daily_loss_limit_hit")
+                else _money((state.get("daily_limits") or {}).get("daily_pnl_usd"))
+            )
+            + f" / limit -{_money((state.get('daily_limits') or {}).get('max_daily_loss_usd'))}"
+        ),
         "",
         "Market risk scores",
     ]

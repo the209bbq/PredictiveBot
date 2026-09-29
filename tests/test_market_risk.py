@@ -97,11 +97,11 @@ def test_default_market_score_cap():
     assert cfg.environment == "paper"
 
 
-def test_demo_environment_allows_full_risk_score():
+def test_demo_environment_uses_same_market_risk_cap():
     cfg = load_config(environment="demo")
     assert cfg.environment == "demo"
-    assert cfg.paper.risk.max_market_risk_score == Decimal("1.0")
-    assert cfg.paper.risk.allow_market_risk_above_hard_max is True
+    assert cfg.paper.risk.max_market_risk_score == DEFAULT_MARKET_RISK_SCORE
+    assert cfg.paper.risk.allow_market_risk_above_hard_max is False
     live = load_config(environment="live")
     assert live.paper.risk.max_market_risk_score == DEFAULT_MARKET_RISK_SCORE
     assert live.paper.risk.allow_market_risk_above_hard_max is False

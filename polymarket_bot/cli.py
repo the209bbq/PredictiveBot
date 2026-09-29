@@ -224,6 +224,15 @@ def cmd_trading(args: argparse.Namespace) -> int:
     print(f"  config.trading.enabled: {status['config_enabled']}")
     print(f"  toggle file: {status['toggle_file'] or 'absent (treated as on)'}  ({status['toggle_path']})")
     print(f"  lock file: {status['lock_path']}")
+    print(
+        f"  Daily capital in use: ${status['daily_capital_in_use_usd']} / "
+        f"${status['max_daily_capital_in_use_usd']}"
+    )
+    hit = "daily loss limit hit" if status["daily_loss_limit_hit"] else "ok"
+    print(
+        f"  Daily P&L (PT {status['pt_date']}): ${status['daily_pnl_usd']} / "
+        f"limit -${status['max_daily_loss_usd']} ({hit})"
+    )
     return 0 if status["effective"] == "on" else 0
 
 

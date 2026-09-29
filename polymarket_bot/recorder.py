@@ -34,12 +34,52 @@ def _tape_rows(tape: list[TapeTrade]) -> list[dict[str, Any]]:
     return rows
 
 
+def candles_from_tape(tape: list[TapeTrade], now: datetime) -> list[dict[str, Any]]:
+    buckets: dict[datetime, dict[str, Any]] = {}
+    for trade in tape:
+        ts = trade.ts or now
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        minute = ts.replace(second=0, microsecond=0)
+        bucket = buckets.get(minute)
+        if bucket is None:
+            buckets[minute] = {
+                "ts": minute.isoformat(),
+                "open": str(trade.price),
+                "high": trade.price,
+                "low": trade.price,
+                "close": trade.price,
+                "volume": trade.qty,
+            }
+        else:
+            bucket["high"] = max(bucket["high"], trade.price)
+            bucket["low"] = min(bucket["low"], trade.price)
+            bucket["close"] = trade.price
+            bucket["volume"] += trade.qty
+    rows = []
+    for minute in sorted(buckets):
+        bucket = buckets[minute]
+        rows.append(
+            {
+                "ts": bucket["ts"],
+                "open": bucket["open"],
+                "high": str(bucket["high"]),
+                "low": str(bucket["low"]),
+                "close": str(bucket["close"]),
+                "volume": str(bucket["volume"]),
+            }
+        )
+    return rows
+
+
 def snapshot_row(
     snap: MarketSnapshot,
     *,
     now: datetime,
     levels: int,
+    candles: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    tape = list(snap.tape or [])
     return {
         "ts": now.isoformat(),
         "venue": snap.venue,
@@ -51,7 +91,8 @@ def snapshot_row(
         "hours_to_resolution": snap.hours_to_resolution,
         "bids": _top_levels(snap.bids, levels),
         "asks": _top_levels(snap.asks, levels),
-        "tape": _tape_rows(list(snap.tape or [])),
+        "tape": _tape_rows(tape),
+        "candles_1m": candles if candles is not None else candles_from_tape(tape, now),
     }
 
 
@@ -126,12 +167,25 @@ def _refresh(client, snap: MarketSnapshot, now: datetime) -> MarketSnapshot:
     refreshed = client.snapshot(market, book, now=now)
     getter = getattr(client, "trades", None)
     if callable(getter):
-        refreshed.tape = getter(snap.slug, limit=100, max_pages=2)
+        refreshed.tape = getter(snap.slug, limit=1000, max_pages=5)
         if refreshed.tape:
             refreshed.last_trade = refreshed.tape[-1].price
     refreshed.stale = False
     refreshed.book_fetched = True
     return refreshed
+
+
+def _candles_for(client, snap: MarketSnapshot, now: datetime) -> list[dict[str, Any]]:
+    fn = getattr(client, "candlesticks", None)
+    if callable(fn):
+        try:
+            end = int(now.timestamp())
+            rows = fn(snap.slug, start_ts=end - 3600, end_ts=end, period_interval=1)
+            if rows:
+                return rows
+        except Exception:
+            pass
+    return candles_from_tape(list(snap.tape or []), now)
 
 
 def run_record(
@@ -166,7 +220,12 @@ def run_record(
                 except Exception:
                     continue
                 last_path = writer.write(
-                    snapshot_row(live, now=tick_now, levels=config.record.book_levels)
+                    snapshot_row(
+                        live,
+                        now=tick_now,
+                        levels=config.record.book_levels,
+                        candles=_candles_for(client, live, tick_now),
+                    )
                 )
             if sleep and i < n_ticks - 1:
                 time.sleep(max(0.0, config.record.interval_seconds))

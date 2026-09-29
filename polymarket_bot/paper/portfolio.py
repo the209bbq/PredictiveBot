@@ -34,6 +34,7 @@ class Fill:
     rebate: Decimal
     strategy: str
     reason: str
+    same_day: bool = False
 
 
 @dataclass
@@ -121,7 +122,14 @@ class Portfolio:
             self.max_drawdown = dd
         return eq
 
-    def apply_fill(self, order: PaperOrder, qty: Decimal, reason: str) -> Fill:
+    def apply_fill(
+        self,
+        order: PaperOrder,
+        qty: Decimal,
+        reason: str,
+        *,
+        same_day: bool = False,
+    ) -> Fill:
         rebate = maker_cashflow(
             qty,
             order.price,
@@ -145,6 +153,7 @@ class Portfolio:
             rebate=rebate,
             strategy=order.strategy,
             reason=reason,
+            same_day=same_day,
         )
         self.fills.append(fill)
         return fill
@@ -171,6 +180,21 @@ class Portfolio:
             "killed": self.killed,
             "kill_reason": self.kill_reason,
             "gross_position": self.gross_position(),
+            "same_day_fills": sum(1 for f in self.fills if f.same_day),
+            "fills": [
+                {
+                    "order_id": f.order_id,
+                    "market": f.market,
+                    "side": f.side,
+                    "price": f.price,
+                    "qty": f.qty,
+                    "rebate": f.rebate,
+                    "strategy": f.strategy,
+                    "reason": f.reason,
+                    "same_day": f.same_day,
+                }
+                for f in self.fills
+            ],
             "positions": {
                 slug: {
                     "qty": p.qty,

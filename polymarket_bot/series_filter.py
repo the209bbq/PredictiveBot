@@ -119,18 +119,39 @@ def _is_allowed(snap: MarketSnapshot, allow: list[str]) -> bool:
     return False
 
 
-def _kxhigh_ok(snap: MarketSnapshot) -> bool:
+def kxhigh_resolution_day_enabled(config: AppConfig) -> bool:
+    extra = (config.extra.get("paper") or {}).get("series") or {}
+    if "kxhigh_resolution_day_enabled" in extra:
+        return bool(extra.get("kxhigh_resolution_day_enabled"))
+    return bool(config.paper.risk.kxhigh_resolution_day_enabled)
+
+
+def is_kxhigh_same_day(snap: MarketSnapshot) -> bool:
+    series = series_ticker(snap)
+    slug = (snap.slug or "").upper()
+    if not (series.startswith("KXHIGH") or slug.startswith("KXHIGH")):
+        return False
+    hours = snap.hours_to_resolution
+    return hours is not None and hours < 24.0
+
+
+def _kxhigh_ok(snap: MarketSnapshot, config: AppConfig) -> bool:
     hours = snap.hours_to_resolution
     if hours is None:
         return False
-    # Next-day plus late-morning on the resolution day. Skip late-day same-session.
-    return 4.0 <= hours <= 40.0
+    if hours > 40.0:
+        return False
+    if hours >= 24.0:
+        return True
+    return kxhigh_resolution_day_enabled(config) and hours >= 4.0
 
 
 def maker_min_hours(snap: MarketSnapshot, config: AppConfig) -> float:
-    """Per-series hours floor. Default 24h; KXHIGH/gas override to 0."""
+    """Per-series hours floor. Default 24h; gas uses AAA blackout; KXHIGH same-day is 4h only if opted in."""
     series = series_ticker(snap)
     slug = (snap.slug or "").upper()
+    if (series.startswith("KXHIGH") or slug.startswith("KXHIGH")) and kxhigh_resolution_day_enabled(config):
+        return 4.0
     overrides = dict(config.paper.risk.maker_min_hours_overrides or {})
     for prefix, hours in sorted(overrides.items(), key=lambda kv: -len(str(kv[0]))):
         token = str(prefix).upper()
@@ -222,7 +243,7 @@ def maker_universe_ok(
     if not _is_allowed(snap, allow):
         return False
     series = series_ticker(snap)
-    if series.startswith("KXHIGH") and not _kxhigh_ok(snap):
+    if series.startswith("KXHIGH") and not _kxhigh_ok(snap, config):
         return False
     if series.startswith("KXRT") and not _kxrt_ok(snap):
         return False

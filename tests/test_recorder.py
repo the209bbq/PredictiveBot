@@ -4,7 +4,8 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from polymarket_bot.config import RecordConfig, load_config
 from polymarket_bot.exchanges.kalshi import snapshot_from_kalshi
-from polymarket_bot.recorder import run_record, snapshot_row
+from polymarket_bot.market_data import TapeTrade
+from polymarket_bot.recorder import candles_from_tape, run_record, snapshot_row
 
 
 class _RecordFake:
@@ -71,6 +72,8 @@ def test_record_writes_gzip_jsonl(tmp_path):
     assert row["ticker"] == "KXRT-FOO"
     assert len(row["bids"]) == 2
     assert row["tape"][0]["qty"] == "3"
+    assert row["candles_1m"]
+    assert row["candles_1m"][0]["close"] == "0.50"
     assert client.books >= 1
 
 
@@ -81,3 +84,52 @@ def test_snapshot_row_is_json_serializable():
     row = snapshot_row(snap, now=datetime.now(timezone.utc), levels=1)
     json.dumps(row)
     assert row["bids"]
+    assert "tape" in row
+    assert "candles_1m" in row
+
+
+def test_candles_from_tape_bucket_by_minute():
+    t0 = datetime(2026, 9, 29, 12, 0, 10, tzinfo=timezone.utc)
+    t1 = datetime(2026, 9, 29, 12, 0, 40, tzinfo=timezone.utc)
+    t2 = datetime(2026, 9, 29, 12, 1, 5, tzinfo=timezone.utc)
+    tape = [
+        TapeTrade(price=Decimal("0.40"), qty=Decimal("2"), ts=t0),
+        TapeTrade(price=Decimal("0.50"), qty=Decimal("1"), ts=t1),
+        TapeTrade(price=Decimal("0.45"), qty=Decimal("4"), ts=t2),
+    ]
+    rows = candles_from_tape(tape, t2)
+    assert len(rows) == 2
+    assert rows[0]["open"] == "0.40"
+    assert rows[0]["high"] == "0.50"
+    assert rows[0]["low"] == "0.40"
+    assert rows[0]["close"] == "0.50"
+    assert rows[0]["volume"] == "3"
+    assert rows[1]["open"] == "0.45"
+    assert rows[1]["volume"] == "4"
+
+
+def test_record_prefers_kalshi_candlesticks(tmp_path):
+    class _WithCandles(_RecordFake):
+        def candlesticks(self, slug, **_k):
+            return [
+                {
+                    "ts": 1,
+                    "open": "0.40",
+                    "high": "0.55",
+                    "low": "0.39",
+                    "close": "0.50",
+                    "volume": "12",
+                }
+            ]
+
+    cfg = load_config()
+    object.__setattr__(
+        cfg,
+        "record",
+        RecordConfig(1, 2, "jsonl", tmp_path / "rec", 64, 5),
+    )
+    path = run_record(cfg, _WithCandles(), ticks=1, sleep=False)
+    row = json.loads(gzip.open(path, "rt", encoding="utf-8").read().strip().splitlines()[0])
+    assert row["tape"][0]["qty"] == "3"
+    assert row["candles_1m"][0]["close"] == "0.50"
+    assert row["candles_1m"][0]["volume"] == "12"

@@ -110,7 +110,8 @@ async function load(){
   el('env', '<span class="demo">'+(s.environment||'PAPER')+'</span> <span class="live">LIVE TRADING DISABLED</span>');
   if (s.exchange && s.exchange.error) document.getElementById('err').textContent = 'Exchange: '+s.exchange.error;
   document.getElementById('toggle').checked = s.trading.effective === 'on';
-  el('toggleReason', s.trading.effective === 'on' ? 'on' : 'off');
+  const lossHit = (s.daily_limits && s.daily_limits.daily_loss_limit_hit) || s.trading.reason === 'daily_loss_limit';
+  el('toggleReason', s.trading.effective === 'on' ? 'on' : (lossHit ? 'daily loss limit hit' : 'off'));
   el('updated', 'Updated '+ (s.updated_at || ''));
   el('account', '<div class="card">Value<br><b>'+money(s.account_value)+'</b></div><div class="card">Cash<br><b>'+money(s.cash)+'</b></div><div class="card">P&amp;L today<br><b>'+money(s.pnl && s.pnl.today && s.pnl.today.net_pnl)+'</b></div><div class="card">P&amp;L total<br><b>'+money(s.pnl && s.pnl.all_time && s.pnl.all_time.net_pnl)+'</b></div>');
   const p = s.pnl || {};
@@ -124,10 +125,16 @@ async function load(){
   const mktRows = Object.entries(p.markets||{}).map(([k,v])=>[k, v.strategy||'', v.qty, money(v.realized), money(v.unrealized)]);
   el('pnlBreak', '<p class="muted">Per strategy</p>'+table(stratRows,['strategy','net','realized','unreal','fees'])+'<p class="muted">Per market</p>'+table(mktRows,['market','strategy','qty','realized','unreal']));
   const exp = s.exposure || {};
-  el('exposure', 'Account exposure <b>'+(exp.pct_display||pct(exp.pct))+'</b> of cap '+(exp.cap_display||'')+'');
+  const daily = s.daily_limits || s.trading || {};
+  const hit = daily.daily_loss_limit_hit;
+  el('exposure',
+    '<div class="card">Account exposure<br><b>'+(exp.pct_display||pct(exp.pct))+'</b><br><span class="muted">cap '+(exp.cap_display||'')+'</span></div>'+
+    '<div class="card">Capital in use<br><b>'+money(daily.daily_capital_in_use_usd)+'</b><br><span class="muted">limit '+money(daily.max_daily_capital_in_use_usd)+'</span></div>'+
+    '<div class="card'+(hit?' live':'')+'">Daily P&amp;L (PT)<br><b>'+(hit?'daily loss limit hit':money(daily.daily_pnl_usd))+'</b><br><span class="muted">limit -'+money(daily.max_daily_loss_usd)+'</span></div>'
+  );
   el('positions', table((s.positions||[]).map(p=>[p.market, p.qty, p.avg_price]), ['market','qty','avg']));
   el('orders', table((s.resting_orders||[]).map(o=>[o.market||o.ticker, o.side, o.price, o.qty||o.count]), ['market','side','price','qty']));
-  el('fills', table((s.fills||[]).slice(0,20).map(f=>[f.market||f.ticker, f.side, f.price||f.yes_price_dollars, f.qty||f.count, f.strategy||'']), ['market','side','price','qty','strategy']));
+  el('fills', table((s.fills||[]).slice(0,20).map(f=>[f.market||f.ticker, f.side, f.price||f.yes_price_dollars, f.qty||f.count, f.strategy||'', f.same_day?'same_day':'']), ['market','side','price','qty','strategy','same_day']));
   el('markets', table((s.markets||[]).map(m=>{
     const why = Object.entries(m.components||{}).map(([k,v])=>k+'='+(Number(v)<=1?(Number(v)*100).toFixed(0)+'%':v)).join(', ');
     const over = m.over_threshold ? ' OVER' : '';
@@ -315,13 +322,14 @@ def build_snapshot(
         if include_exchange
         else {"hours": None, "quotes": {}, "error": None}
     )
+    trading = trading_status(config)
     return {
         "updated_at": now.isoformat(),
         "environment": environment,
         "live_trading_enabled": False,
         "exchange": exchange,
         "source": source,
-        "trading": trading_status(config),
+        "trading": trading,
         "account_value": equity,
         "cash": cash,
         "exposure": {
@@ -329,6 +337,14 @@ def build_snapshot(
             "pct_display": risk.get("pct_display"),
             "cap": risk.get("cap"),
             "cap_display": risk.get("cap_display") or state.get("account_risk_cap"),
+        },
+        "daily_limits": state.get("daily_limits") or {
+            "daily_capital_in_use_usd": trading.get("daily_capital_in_use_usd"),
+            "max_daily_capital_in_use_usd": config.paper.risk.max_daily_capital_in_use_usd,
+            "daily_pnl_usd": trading.get("daily_pnl_usd"),
+            "max_daily_loss_usd": config.paper.risk.max_daily_loss_usd,
+            "daily_loss_limit_hit": bool(state.get("daily_loss_limit_hit") or trading.get("daily_loss_limit_hit")),
+            "pt_date": trading.get("pt_date"),
         },
         "positions": positions,
         "resting_orders": list(state.get("resting_leftover") or []),

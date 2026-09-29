@@ -24,14 +24,14 @@ from polymarket_bot.market_risk import (
 )
 from polymarket_bot.paper.risk import (
     account_value_from_portfolio,
-    check_daily_loss,
     format_risk_pct,
     past_resolution_cutoff,
     price_jumped,
     snapshot_account_risk,
 )
+from polymarket_bot.daily_limits import refresh_daily_limits
 from polymarket_bot.scanner import scan_markets, scan_near_resolution
-from polymarket_bot.series_filter import maker_min_hours, maker_universe_ok
+from polymarket_bot.series_filter import is_kxhigh_same_day, maker_min_hours, maker_universe_ok
 from polymarket_bot.pnl import append_pnl
 from polymarket_bot.trading import TradingLock, trading_is_on
 
@@ -185,6 +185,7 @@ def _run_paper_locked(
     last_scores: dict[str, dict[str, Any]] = {}
     last_quote_at: dict[str, datetime] = {}
     last_tape_at: dict[str, datetime] = {}
+    last_daily = None
     history = PriceHistory()
     logger.log(
         "paper_start",
@@ -243,11 +244,31 @@ def _run_paper_locked(
         mids = _mids(snaps)
         for port in (maker_port, near_port):
             port.record_equity(mids)
-            reason = check_daily_loss(port, mids, config.paper.risk)
-            if reason and not port.killed:
-                port.killed = True
-                port.kill_reason = reason
-                logger.log("kill_switch", strategy=port.name, reason=reason, live=False)
+
+        maker_eq = account_value_from_portfolio(maker_port, mids)
+        near_eq = account_value_from_portfolio(near_port, mids)
+        maker_at, _ = snapshot_account_risk(maker_port, maker_book, maker_eq)
+        near_at, _ = snapshot_account_risk(near_port, near_book, near_eq)
+        tick_now = datetime.now(timezone.utc) if not is_replay else now
+        daily = refresh_daily_limits(
+            config,
+            equity=maker_eq + near_eq,
+            capital_in_use=maker_at + near_at,
+            now=tick_now,
+        )
+        last_daily = daily
+        if daily.just_triggered:
+            logger.log(
+                "ALERT",
+                reason="daily_loss_limit",
+                alert=True,
+                daily_pnl=daily.day_pnl,
+                limit=daily.loss_limit,
+                live=False,
+            )
+        if daily.loss_halted:
+            maker_book = _cancel_all(maker_book, logger, "daily_loss_limit", "maker")
+            near_book = _cancel_all(near_book, logger, "daily_loss_limit", "near_resolution")
 
         if maker_port.killed:
             maker_book = _cancel_all(maker_book, logger, maker_port.kill_reason or "killed", "maker")
@@ -312,7 +333,8 @@ def _run_paper_locked(
                     strict=config.paper.fills.require_strict_trade_through,
                 )
                 if reason and qty > 0:
-                    fill = port.apply_fill(order, qty, reason)
+                    same_day = is_kxhigh_same_day(snap)
+                    fill = port.apply_fill(order, qty, reason, same_day=same_day)
                     logger.log(
                         "fill",
                         strategy=order.strategy,
@@ -322,6 +344,7 @@ def _run_paper_locked(
                         qty=qty,
                         rebate=fill.rebate,
                         reason=reason,
+                        same_day=same_day,
                         live=False,
                     )
                     leftover = order.qty - qty
@@ -344,6 +367,9 @@ def _run_paper_locked(
             return remaining
 
         trading_on, trading_reason = trading_is_on(config)
+        if daily.loss_halted:
+            trading_on = False
+            trading_reason = "daily_loss_limit"
         if not trading_on:
             maker_book = _cancel_all(maker_book, logger, "trading_off", "maker")
             near_book = _cancel_all(near_book, logger, "trading_off", "near_resolution")
@@ -478,6 +504,8 @@ def _run_paper_locked(
         "account_risk_cap": format_risk_pct(config.paper.risk.max_account_risk_pct),
         "market_risk_cap": format_score(config.paper.risk.max_market_risk_score),
         "market_risk": last_scores,
+        "daily_limits": last_daily.as_dict() if last_daily else {},
+        "daily_loss_limit_hit": bool(last_daily and last_daily.loss_halted),
     }
     logger.log("paper_end", live=False, maker_pnl=state["maker"]["net_pnl"], near_pnl=state["near_resolution"]["net_pnl"])
     try:

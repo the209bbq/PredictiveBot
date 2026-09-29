@@ -49,6 +49,11 @@ def test_build_snapshot_includes_risk_and_pnl(tmp_path):
     object.__setattr__(cfg.logging, "state_path", state_path)
     object.__setattr__(
         cfg,
+        "trading",
+        TradingConfig(True, tmp_path / "toggle.json", tmp_path / "lock"),
+    )
+    object.__setattr__(
+        cfg,
         "dashboard",
         DashboardConfig("127.0.0.1", 8787, 3, tmp_path / "pnl.jsonl"),
     )
@@ -59,6 +64,9 @@ def test_build_snapshot_includes_risk_and_pnl(tmp_path):
     assert snap["exchange"]["quotes"] == {}
     assert snap["markets"][0]["slug"] == "KXDEMO-COIN"
     assert snap["exposure"]["pct_display"] == "12.00%"
+    assert "daily_limits" in snap
+    assert snap["daily_limits"]["max_daily_capital_in_use_usd"] == Decimal("100")
+    assert snap["daily_limits"]["max_daily_loss_usd"] == Decimal("50")
     assert snap["pnl"]["all_time"]["net_pnl"] == Decimal("5.00")
     assert snap["pnl"]["all_time"]["realized"] == Decimal("2.00")
     assert "compare" not in snap
@@ -90,6 +98,8 @@ def test_dashboard_http_toggle_and_auth(tmp_path, monkeypatch):
         assert "Trading" in page.text
         assert "switch" in page.text
         assert "LIVE TRADING DISABLED" in page.text
+        assert "Capital in use" in page.text
+        assert "daily loss limit hit" in page.text
         snap = httpx.get(f"{base}/api/snapshot", timeout=3).json()
         assert snap["environment"] in {"PAPER", "DEMO"}
         bad = httpx.post(f"{base}/api/trading", json={"enabled": False}, timeout=3)

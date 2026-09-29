@@ -92,6 +92,7 @@ def snapshot_from_state(state: dict[str, Any], *, now: datetime | None = None) -
             "net_pnl": net,
             "max_drawdown": _dec(block.get("max_drawdown")),
             "fill_count": int(block.get("fill_count") or 0),
+            "same_day_fills": int(block.get("same_day_fills") or 0),
         }
         total_equity += equity
         total_cash += cash
@@ -128,6 +129,7 @@ def snapshot_from_state(state: dict[str, Any], *, now: datetime | None = None) -
         "max_drawdown": max_dd,
         "wins": wins,
         "losses": losses,
+        "same_day_fills": sum(int((s or {}).get("same_day_fills") or 0) for s in strategies.values()),
         "strategies": strategies,
         "markets": markets,
     }

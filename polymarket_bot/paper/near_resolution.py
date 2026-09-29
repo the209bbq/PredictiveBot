@@ -9,8 +9,8 @@ from polymarket_bot.paper.portfolio import PaperOrder, Portfolio
 from polymarket_bot.market_risk import attach_market_risk, is_live_in_game, market_over_risk_threshold
 from polymarket_bot.paper.risk import (
     account_value_from_portfolio,
-    would_breach_account_risk,
     would_breach_position,
+    would_breach_risk_limits,
 )
 
 STRATEGY = "near_resolution"
@@ -66,8 +66,8 @@ def desired_quotes(
         fee_multiplier=snap.fee_multiplier,
     )
     equity = account_value_from_portfolio(portfolio, {snap.slug: snap.mid})
-    if would_breach_account_risk(
-        portfolio, list(resting or []), candidate, equity, config.paper.risk.max_account_risk_pct
+    if would_breach_risk_limits(
+        portfolio, list(resting or []), candidate, equity, config.paper.risk
     ):
         return []
     return [candidate]

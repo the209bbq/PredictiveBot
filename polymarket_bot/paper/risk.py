@@ -34,6 +34,7 @@ __all__ = [
     "total_at_risk",
     "validate_account_risk_pct",
     "would_breach_account_risk",
+    "would_breach_risk_limits",
     "would_breach_position",
     "worst_case_contract_risk",
 ]
@@ -68,11 +69,18 @@ def would_breach_position(
     return None
 
 
-def check_daily_loss(portfolio: Portfolio, mids: dict, risk: RiskConfig) -> str | None:
+def check_daily_loss(
+    portfolio: Portfolio,
+    mids: dict,
+    risk: RiskConfig,
+    *,
+    start_equity: Decimal | None = None,
+) -> str | None:
     eq = portfolio.equity(mids)
-    loss = portfolio.starting_cash - eq
-    if loss >= risk.max_daily_loss:
-        return "max_daily_loss"
+    start = start_equity if start_equity is not None else portfolio.starting_cash
+    limit = getattr(risk, "max_daily_loss_usd", None) or risk.max_daily_loss
+    if eq - start <= -limit:
+        return "daily_loss_limit"
     return None
 
 
@@ -104,11 +112,32 @@ def would_breach_account_risk(
     proposed: PaperOrder,
     account_value: Decimal,
     cap: Decimal,
+    capital_cap: Decimal | None = None,
 ) -> str | None:
-    _at_risk, frac = snapshot_account_risk(portfolio, resting, account_value, proposed)
+    at_risk, frac = snapshot_account_risk(portfolio, resting, account_value, proposed)
+    reasons = []
     if frac > cap:
-        return "account_risk_cap"
-    return None
+        reasons.append("account_risk_cap")
+    if capital_cap is not None and at_risk > capital_cap:
+        reasons.append("daily_capital_cap")
+    return reasons[0] if reasons else None
+
+
+def would_breach_risk_limits(
+    portfolio: Portfolio,
+    resting: Iterable[PaperOrder],
+    proposed: PaperOrder,
+    account_value: Decimal,
+    risk: RiskConfig,
+) -> str | None:
+    return would_breach_account_risk(
+        portfolio,
+        resting,
+        proposed,
+        account_value,
+        risk.max_account_risk_pct,
+        capital_cap=risk.max_daily_capital_in_use_usd,
+    )
 
 
 def account_value_from_portfolio(portfolio: Portfolio, mids: dict[str, Decimal | None]) -> Decimal:

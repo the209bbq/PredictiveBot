@@ -14,8 +14,8 @@ from polymarket_bot.series_filter import maker_min_hours, maker_universe_ok
 from polymarket_bot.paper.risk import (
     account_value_from_portfolio,
     past_resolution_cutoff,
-    would_breach_account_risk,
     would_breach_position,
+    would_breach_risk_limits,
 )
 
 STRATEGY = "maker"
@@ -97,7 +97,6 @@ def desired_quotes(
     qty = config.paper.quote_size_contracts
     booked = list(resting or [])
     equity = account_value_from_portfolio(portfolio, {snap.slug: snap.mid})
-    cap = config.paper.risk.max_account_risk_pct
     orders: list[PaperOrder] = []
     for side, price in (("buy", bid), ("sell", ask)):
         if price is None:
@@ -132,7 +131,7 @@ def desired_quotes(
             fee_type=snap.fee_type,
             fee_multiplier=snap.fee_multiplier,
         )
-        if would_breach_account_risk(portfolio, booked, candidate, equity, cap):
+        if would_breach_risk_limits(portfolio, booked, candidate, equity, config.paper.risk):
             continue
         orders.append(candidate)
         booked.append(candidate)

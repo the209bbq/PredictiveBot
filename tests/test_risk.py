@@ -19,9 +19,9 @@ def test_per_market_and_gross_caps():
 
 def test_daily_loss_kill_switch():
     cfg = load_config().paper.risk
-    port = Portfolio("maker", Decimal("970"), Decimal("1000"))
+    port = Portfolio("maker", Decimal("940"), Decimal("1000"))
     mids = {"a": Decimal("0.50")}
     port.position("a").qty = Decimal("0")
-    assert check_daily_loss(port, mids, cfg) == "max_daily_loss"
+    assert check_daily_loss(port, mids, cfg) == "daily_loss_limit"
     port.cash = Decimal("990")
     assert check_daily_loss(port, mids, cfg) is None

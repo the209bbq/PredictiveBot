@@ -59,7 +59,6 @@ DEFAULT_REQUOTE_INTERVAL = 30.0
 MIN_REQUOTE_INTERVAL = 10.0
 MAX_REQUOTE_INTERVAL = 60.0
 DEFAULT_HOURS_OVERRIDES = {
-    "KXHIGH": 0.0,
     "KXAAAGASD": 0.0,
     "KXAAAGASW": 0.0,
 }
@@ -104,6 +103,8 @@ class RiskConfig:
     max_position_per_market: Decimal
     max_gross_position: Decimal
     max_daily_loss: Decimal
+    max_daily_loss_usd: Decimal
+    max_daily_capital_in_use_usd: Decimal
     cancel_on_price_jump: Decimal
     maker_min_hours_to_resolution: float
     max_account_risk_pct: Decimal
@@ -111,6 +112,7 @@ class RiskConfig:
     max_market_risk_score: Decimal
     allow_market_risk_above_hard_max: bool
     maker_min_hours_overrides: dict[str, float]
+    kxhigh_resolution_day_enabled: bool
 
 
 @dataclass(frozen=True)
@@ -319,7 +321,17 @@ def load_config(path: str | Path | None = None, environment: str | None = None) 
             risk=RiskConfig(
                 max_position_per_market=_dec(risk_raw.get("max_position_per_market"), "40"),
                 max_gross_position=_dec(risk_raw.get("max_gross_position"), "120"),
-                max_daily_loss=_dec(risk_raw.get("max_daily_loss"), "25"),
+                max_daily_loss=_dec(
+                    risk_raw.get("max_daily_loss_usd", risk_raw.get("max_daily_loss")),
+                    "50",
+                ),
+                max_daily_loss_usd=_dec(
+                    risk_raw.get("max_daily_loss_usd", risk_raw.get("max_daily_loss")),
+                    "50",
+                ),
+                max_daily_capital_in_use_usd=_dec(
+                    risk_raw.get("max_daily_capital_in_use_usd"), "100"
+                ),
                 cancel_on_price_jump=_dec(risk_raw.get("cancel_on_price_jump"), "0.08"),
                 maker_min_hours_to_resolution=float(risk_raw.get("maker_min_hours_to_resolution", 24)),
                 max_account_risk_pct=risk_pct,
@@ -327,6 +339,10 @@ def load_config(path: str | Path | None = None, environment: str | None = None) 
                 max_market_risk_score=market_score,
                 allow_market_risk_above_hard_max=allow_market_above,
                 maker_min_hours_overrides=hours_overrides,
+                kxhigh_resolution_day_enabled=bool(
+                    (paper_raw.get("series") or {}).get("kxhigh_resolution_day_enabled")
+                    or risk_raw.get("kxhigh_resolution_day_enabled", False)
+                ),
             ),
             fills=FillConfig(
                 require_strict_trade_through=bool(fills_raw.get("require_strict_trade_through", True)),
