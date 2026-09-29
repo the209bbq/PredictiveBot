@@ -189,7 +189,7 @@ paper:
     min_price: 0.80
     max_price: 0.97
     allow_yes: false
-    sides: [no]
+    sides: ["no"]
     max_hours_to_close: 6
     min_hours_to_close: 0.25
     quote_size_min: 1

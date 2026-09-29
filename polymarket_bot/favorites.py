@@ -83,6 +83,15 @@ EXCLUDE_TOKENS = (
     "fx ",
 )
 
+def _as_side(value: Any) -> str:
+    """YAML `no`/`yes` are booleans; keep them as contract sides."""
+    if value is False or str(value).lower() in {"false", "no"}:
+        return "no"
+    if value is True or str(value).lower() in {"true", "yes"}:
+        return "yes"
+    return str(value).lower()
+
+
 DEFAULTS = {
     "min_price": Decimal("0.80"),
     "max_price": Decimal("0.97"),
@@ -134,7 +143,8 @@ def favorites_settings(config: AppConfig) -> FavoritesSettings:
     extra = (config.extra.get("paper") or {}) if isinstance(config.extra, dict) else {}
     raw = extra.get("favorites") if isinstance(extra.get("favorites"), dict) else {}
     sides_raw = raw.get("sides") or DEFAULTS["sides"]
-    sides = tuple(str(s).lower() for s in sides_raw)
+    sides = tuple(_as_side(s) for s in sides_raw)
+    sides = tuple(s for s in sides if s in {"yes", "no"}) or ("no",)
     allow_yes = bool(raw.get("allow_yes", DEFAULTS["allow_yes"]))
     if allow_yes and "yes" not in sides:
         sides = sides + ("yes",)
@@ -592,7 +602,7 @@ def _hours_bucket(hours: Any) -> str:
     return "3-6h"
 
 
-def summarize_fills(rows: list[dict[str, Any]]) -> dict[str, Any]:
+def summarize_fills(rows: list[dict[str, Any]], *, nested: bool = True) -> dict[str, Any]:
     settled = [r for r in rows if r.get("settled") and r.get("outcome") is not None]
     n = len(settled)
     wins = 0
@@ -627,8 +637,16 @@ def summarize_fills(rows: list[dict[str, Any]]) -> dict[str, Any]:
             groups.setdefault(key_fn(row), []).append(row)
         out = {}
         for key, items in groups.items():
-            out[key] = summarize_fills(items) | {"n": len(items)}
+            out[key] = summarize_fills(items, nested=False) | {"n": len(items)}
         return out
+
+    splits = {}
+    if nested:
+        splits = {
+            "by_series": _split(lambda r: str(r.get("series") or "?")),
+            "by_side": _split(lambda r: str(r.get("side") or "?")),
+            "by_horizon": _split(lambda r: _hours_bucket(r.get("hours_to_close"))),
+        }
 
     return {
         "n_fills": len(rows),
@@ -643,9 +661,7 @@ def summarize_fills(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "pnl_per_contract": per,
         "n_contracts": total_qty,
         "avg_adverse_1m": (sum(adverse, ZERO) / len(adverse)) if adverse else ZERO,
-        "by_series": _split(lambda r: str(r.get("series") or "?")),
-        "by_side": _split(lambda r: str(r.get("side") or "?")),
-        "by_horizon": _split(lambda r: _hours_bucket(r.get("hours_to_close"))),
+        **splits,
     }
 
 

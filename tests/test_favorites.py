@@ -90,7 +90,7 @@ def test_demo_defaults_to_favorites_maker_and_drops_payrolls():
     assert settings.min_hours_to_close == 0.25
     assert settings.late_entry_enabled is True
     assert settings.fill_tag == FILL_TAG
-    assert paper.risk.kxhigh_resolution_day_enabled is False
+    assert paper.paper.risk.kxhigh_resolution_day_enabled is False
     assert demo.paper.risk.kxhigh_resolution_day_enabled is False
     demo_allow = [str(x).upper() for x in ((demo.extra.get("paper") or {}).get("series") or {}).get("allow") or []]
     paper_allow = [str(x).upper() for x in ((paper.extra.get("paper") or {}).get("series") or {}).get("allow") or []]
