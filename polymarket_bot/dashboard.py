@@ -83,6 +83,7 @@ svg { background:#12181f; border-radius:6px; }
 <div id="compare"></div>
 <script>
 const refreshMs = %REFRESH_MS%;
+let toggling = false;
 function money(v){ if(v===undefined||v===null||v==='') return '—'; const n=Number(v); return isNaN(n)?String(v):'$'+n.toFixed(2); }
 function pct(v){ if(v===undefined||v===null||v==='') return '—'; const n=Number(v); return isNaN(n)?String(v):(n<=1? (n*100).toFixed(1)+'%' : n.toFixed(1)+'%'); }
 function el(id, html){ document.getElementById(id).innerHTML = html; }
@@ -105,12 +106,13 @@ function spark(points){
   return '<svg width="'+w+'" height="'+h+'" viewBox="0 0 '+w+' '+h+'"><polyline fill="none" stroke="#5aa7ff" stroke-width="2" points="'+d+'"/></svg>';
 }
 async function load(){
+  if (toggling) return;
   const r = await fetch('/api/snapshot');
   const s = await r.json();
   el('env', '<span class="demo">'+(s.environment||'PAPER')+'</span> <span class="live">LIVE TRADING DISABLED</span>');
   if (s.exchange && s.exchange.error) document.getElementById('err').textContent = 'Exchange: '+s.exchange.error;
   document.getElementById('toggle').checked = s.trading.effective === 'on';
-  el('toggleReason', s.trading.reason || '');
+  el('toggleReason', s.trading.effective === 'on' ? 'on' : 'off');
   el('updated', 'Updated '+ (s.updated_at || ''));
   el('account', '<div class="card">Value<br><b>'+money(s.account_value)+'</b></div><div class="card">Cash<br><b>'+money(s.cash)+'</b></div><div class="card">P&amp;L today<br><b>'+money(s.pnl && s.pnl.today && s.pnl.today.net_pnl)+'</b></div><div class="card">P&amp;L total<br><b>'+money(s.pnl && s.pnl.all_time && s.pnl.all_time.net_pnl)+'</b></div>');
   const p = s.pnl || {};
@@ -138,13 +140,25 @@ async function load(){
   el('compare', '<pre>'+ (s.compare || '(none)') +'</pre>');
 }
 document.getElementById('toggle').addEventListener('change', async (ev)=>{
+  if (toggling) return;
   const want = ev.target.checked;
-  if(!confirm('Turn trading '+(want?'ON':'OFF')+'? This writes the same state file as pmbot trading.')){
-    ev.target.checked = !want; return;
+  toggling = true;
+  try {
+    if(!confirm('Turn trading '+(want?'ON':'OFF')+'? This writes the same state file as pmbot trading.')){
+      ev.target.checked = !want;
+      return;
+    }
+    const r = await fetch('/api/trading', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({enabled: want, confirm: true})});
+    if(!r.ok){
+      document.getElementById('err').textContent = await r.text();
+      ev.target.checked = !want;
+      return;
+    }
+    toggling = false;
+    await load();
+  } finally {
+    toggling = false;
   }
-  const r = await fetch('/api/trading', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({enabled: want, confirm: true})});
-  if(!r.ok){ document.getElementById('err').textContent = await r.text(); ev.target.checked = !want; }
-  else load();
 });
 load();
 setInterval(load, refreshMs);
