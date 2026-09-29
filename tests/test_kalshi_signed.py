@@ -202,6 +202,8 @@ def test_place_demo_order_tags_client_order_id(monkeypatch):
     finally:
         client.close()
     assert captured["body"]["client_order_id"].startswith("pmbot-")
+    assert captured["body"]["side"] == "bid"
+    assert captured["body"]["post_only"] is True
     assert "oid-1" in client._bot_order_ids
     assert out["order"]["order_id"] == "oid-1"
 

@@ -396,6 +396,58 @@ def desired_quotes(
     return [order]
 
 
+def listed_skip_reason(
+    market: dict[str, Any],
+    config: AppConfig,
+    *,
+    now: datetime | None = None,
+) -> str | None:
+    """Why a list row is dropped before a book fetch. None = keep."""
+    from polymarket_bot.exchanges.kalshi import snapshot_from_kalshi
+
+    snap = snapshot_from_kalshi(market, None, now=now)
+    settings = favorites_settings(config)
+    if hard_excluded(snap):
+        return "favorites_excluded"
+    if _is_disabled(snap, _disabled_list(config)):
+        return "disabled"
+    if not _is_allowed(snap, settings.allow):
+        return "series_filter"
+    if _has_maker_fees(snap) and not settings.allow_maker_fee_series:
+        return "maker_fee_series"
+    if event_blackout(snap, config, now or datetime.now(timezone.utc)):
+        return "event_blackout"
+    if snap.hours_to_resolution is None:
+        return "no_close_time"
+    if not in_entry_window(snap, settings):
+        return "favorites_window"
+    return None
+
+
+def book_skip_reason(
+    snap: MarketSnapshot,
+    config: AppConfig,
+    *,
+    now: datetime | None = None,
+    risk_cap=None,
+) -> str | None:
+    from polymarket_bot.market_risk import market_over_risk_threshold
+
+    if snap.stale or not snap.book_fetched:
+        return "stale_book"
+    if snap.best_bid is None or snap.best_ask is None:
+        return "no_book"
+    why = skip_reason(snap, config, now=now)
+    if why:
+        return why
+    cap = risk_cap if risk_cap is not None else config.paper.risk.max_market_risk_score
+    if market_over_risk_threshold(snap, cap):
+        return "market_risk_score"
+    if favorite_side(snap, favorites_settings(config)) is None:
+        return "favorites_side"
+    return None
+
+
 def skip_reason(snap: MarketSnapshot, config: AppConfig, *, now: datetime | None = None) -> str | None:
     settings = favorites_settings(config)
     if hard_excluded(snap):

@@ -7,6 +7,7 @@ Secrets come from environment variables. No transfer endpoints are called.
 from __future__ import annotations
 
 import json
+import logging
 import time
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
@@ -36,6 +37,7 @@ from polymarket_bot.market_risk import (
 from polymarket_bot.paper import maker
 from polymarket_bot.paper.portfolio import PaperOrder, Portfolio
 from polymarket_bot import favorites
+from polymarket_bot.kalshi_orders import format_v2_price, v2_from_paper_order, v2_would_cross
 from polymarket_bot.daily_limits import refresh_daily_limits
 from polymarket_bot.paper.risk import (
     past_resolution_cutoff,
@@ -55,7 +57,7 @@ from polymarket_bot.kalshi_account import (
     position_qty,
     position_rows,
 )
-from polymarket_bot.scanner import scan_maker_universe
+from polymarket_bot.scanner import last_scan_summary, scan_maker_universe
 from polymarket_bot.series_filter import maker_min_hours, maker_universe_ok, quote_mode
 from polymarket_bot.trading import TradingLock, TradingPaused, trading_is_on
 
@@ -232,11 +234,22 @@ def _pick_market(
         snap = client.snapshot(market, book, now=now)
         snap.stale = False
         snap.book_fetched = True
+        if favorites.is_favorites_mode(config):
+            why = favorites.book_skip_reason(snap, config, now=now)
+            if why:
+                logging.getLogger("polymarket_bot").info(
+                    "favorites_scan pinned_ticker=%s would_skip=%s hours=%s",
+                    ticker,
+                    why,
+                    snap.hours_to_resolution,
+                )
         return snap
     picks = scan_maker_universe(client, config, now=now)
     if not picks:
+        extra = last_scan_summary() or "no scan summary"
         raise DemoOrderError(
-            "No eligible allowlisted Kalshi DEMO market (series allow/deny or risk-score gate)."
+            "No eligible allowlisted Kalshi DEMO market in the current filters. "
+            f"{extra} Pin --ticker if you already have one."
         )
     return picks[0]
 
@@ -514,22 +527,19 @@ def run_demo_session(
                 else:
                     desired = maker.desired_quotes(snap, port, config, f"d{tick}", now=now_tick)
                 for order in desired:
-                    if fav_mode:
-                        side = getattr(order, "contract_side", None) or "no"
-                        _bid, best_ask = favorites.side_book(snap, side)
-                        if favorites.would_cross(order.price, best_ask):
-                            logger.log(
-                                "skip_quote",
-                                reason="would_cross",
-                                market=snap.slug,
-                                side=side,
-                                price=order.price,
-                                live=False,
-                                demo=True,
-                            )
-                            continue
-                    else:
-                        side = "bid" if order.side == "buy" else "ask"
+                    side, yes_price = v2_from_paper_order(order)
+                    if v2_would_cross(side, yes_price, snap.best_bid, snap.best_ask):
+                        logger.log(
+                            "skip_quote",
+                            reason="would_cross",
+                            market=snap.slug,
+                            side=side,
+                            price=yes_price,
+                            contract_side=getattr(order, "contract_side", None),
+                            live=False,
+                            demo=True,
+                        )
+                        continue
                     bal = {}
                     try:
                         bal = client.demo_balance(confirm_demo=True)
@@ -561,7 +571,7 @@ def run_demo_session(
                         result = client.place_demo_order(
                             ticker=snap.slug,
                             side=side,
-                            price=str(order.price),
+                            price=format_v2_price(yes_price),
                             count=str(int(order.qty)),
                             confirm_demo=True,
                             post_only=True,

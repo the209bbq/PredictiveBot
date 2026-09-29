@@ -410,3 +410,218 @@ def test_favorites_report_cli_and_dashboard_panel(tmp_path, capsys):
     assert snap["favorites"]["n_settled"] == 1
     assert "<h2>Favorites strategy</h2>" in PAGE
     assert "id=\"favorites\"" in PAGE
+
+
+def test_v2_payload_no_favorite_is_ask_at_one_minus_p():
+    from polymarket_bot.account_risk import worst_case_contract_risk
+    from polymarket_bot.kalshi_orders import (
+        create_order_v2_body,
+        v2_from_paper_order,
+        v2_would_cross,
+    )
+
+    no_order = PaperOrder(
+        "o1",
+        "KXRAIN-26SEP28-LV",
+        "buy",
+        Decimal("0.8500"),
+        Decimal("2"),
+        STRATEGY,
+        contract_side="no",
+        fill_tag=FILL_TAG,
+    )
+    book_side, yes_px = v2_from_paper_order(no_order)
+    assert book_side == "ask"
+    assert yes_px == Decimal("0.1500")
+    assert worst_case_contract_risk(no_order.side, no_order.price, no_order.qty) == Decimal("1.70")
+    body = create_order_v2_body(
+        ticker="KXRAIN-26SEP28-LV",
+        side="no",
+        price="0.8500",
+        count="2",
+        post_only=True,
+        client_order_id="pmbot-test-no",
+    )
+    assert body == {
+        "ticker": "KXRAIN-26SEP28-LV",
+        "side": "ask",
+        "count": "2",
+        "price": "0.1500",
+        "time_in_force": "good_till_canceled",
+        "self_trade_prevention_type": "taker_at_cross",
+        "post_only": True,
+        "client_order_id": "pmbot-test-no",
+    }
+    assert not v2_would_cross("ask", Decimal("0.1500"), Decimal("0.1400"), Decimal("0.1600"))
+    assert v2_would_cross("ask", Decimal("0.1500"), Decimal("0.1500"), Decimal("0.1600"))
+
+    yes_order = PaperOrder(
+        "o2",
+        "KXHIGHNY-29SEP26",
+        "buy",
+        Decimal("0.8500"),
+        Decimal("1"),
+        STRATEGY,
+        contract_side="yes",
+        fill_tag=FILL_TAG,
+    )
+    yes_side, yes_yes_px = v2_from_paper_order(yes_order)
+    assert yes_side == "bid"
+    assert yes_yes_px == Decimal("0.8500")
+    yes_body = create_order_v2_body(
+        ticker="KXHIGHNY-29SEP26",
+        side="yes",
+        price="0.8500",
+        count="1",
+        post_only=True,
+        client_order_id="pmbot-test-yes",
+    )
+    assert yes_body["side"] == "bid"
+    assert yes_body["price"] == "0.8500"
+    assert yes_body["post_only"] is True
+    two = create_order_v2_body(
+        ticker="KXDEMO-COIN",
+        side="bid",
+        price="0.4900",
+        count="1",
+        post_only=True,
+        client_order_id="pmbot-test-2s",
+    )
+    assert two["side"] == "bid"
+    assert two["price"] == "0.4900"
+
+
+def test_place_demo_order_converts_no_side_to_v2_ask():
+    from polymarket_bot.exchanges.kalshi import KalshiClient
+
+    cfg = load_config()
+    client = KalshiClient(cfg)
+    captured: dict = {}
+
+    def signed(method, path, *, confirm_demo, body=None, params=None):
+        captured["path"] = path
+        captured["body"] = body
+        return {"order": {"order_id": "oid-no"}}
+
+    client.signed_demo = signed  # type: ignore[method-assign]
+    try:
+        client.place_demo_order(
+            ticker="KXRAIN-26SEP28-LV",
+            side="no",
+            price="0.8500",
+            count="2",
+            confirm_demo=True,
+            post_only=True,
+            client_order_id="pmbot-no-fav",
+        )
+    finally:
+        client.close()
+    assert captured["path"] == "/portfolio/events/orders"
+    assert captured["body"]["side"] == "ask"
+    assert captured["body"]["price"] == "0.1500"
+    assert captured["body"]["post_only"] is True
+    assert captured["body"]["count"] == "2"
+
+
+def test_favorites_scan_uses_series_list_not_first_800(caplog):
+    from polymarket_bot.scanner import last_scan_summary, scan_maker_universe
+
+    cfg = _fav_cfg()
+    now = NOW
+    weather = {
+        "ticker": "KXRAIN-29SEP26-LV",
+        "series_ticker": "KXRAIN",
+        "title": "Las Vegas rain",
+        "category": "Climate and Weather",
+        "status": "open",
+        "close_time": "2026-09-29T15:00:00Z",
+        "fee_type": "quadratic",
+        "volume_fp": "10",
+    }
+    junk = [
+        {
+            "ticker": f"KXJUNK-{i}",
+            "series_ticker": "KXJUNK",
+            "status": "open",
+            "yes_bid_dollars": "0.49",
+            "yes_ask_dollars": "0.51",
+            "close_time": "2027-01-01T00:00:00Z",
+            "fee_type": "quadratic",
+            "volume_fp": "99999",
+        }
+        for i in range(20)
+    ]
+
+    class _Client:
+        source_name = "fake"
+        venue = "kalshi"
+
+        def list_series(self, **_k):
+            return [{"ticker": "KXRAIN"}, {"ticker": "KXNFLGAME"}]
+
+        def list_markets(self, *, series_ticker=None, **_k):
+            if series_ticker == "KXRAIN":
+                return [weather]
+            if series_ticker:
+                return []
+            return junk + [weather]
+
+        def book(self, slug):
+            return {"orderbook_fp": {"yes_dollars": [["0.1400", "12"]], "no_dollars": [["0.8400", "12"]]}}
+
+        def snapshot(self, market, book=None, *, now=None):
+            return snapshot_from_kalshi(market, book, now=now)
+
+        def close(self):
+            return None
+
+    import logging
+
+    caplog.set_level(logging.INFO, logger="polymarket_bot")
+    rows = scan_maker_universe(_Client(), cfg, now=now)
+    assert [s.slug for s in rows] == ["KXRAIN-29SEP26-LV"]
+    summary = last_scan_summary()
+    assert "favorites_scan" in summary
+    assert "kept=1" in summary
+    assert "by_reason=" in summary
+
+
+def test_favorites_scan_logs_window_miss_without_loosening():
+    from polymarket_bot.scanner import last_scan_summary, scan_maker_universe
+
+    cfg = _fav_cfg()
+    late = {
+        "ticker": "KXRAIN-26SEP28-LV",
+        "series_ticker": "KXRAIN",
+        "title": "Las Vegas rain",
+        "category": "Climate and Weather",
+        "status": "open",
+        "close_time": "2026-09-26T12:00:00Z",
+        "fee_type": "quadratic",
+    }
+
+    class _Client:
+        source_name = "fake"
+        venue = "kalshi"
+
+        def list_series(self, **_k):
+            return [{"ticker": "KXRAIN"}]
+
+        def list_markets(self, *, series_ticker=None, **_k):
+            return [late] if series_ticker == "KXRAIN" else []
+
+        def book(self, slug):
+            raise AssertionError("outside-window market must not consume a book fetch")
+
+        def snapshot(self, market, book=None, *, now=None):
+            return snapshot_from_kalshi(market, book, now=now)
+
+        def close(self):
+            return None
+
+    rows = scan_maker_universe(_Client(), cfg, now=NOW)
+    assert rows == []
+    summary = last_scan_summary()
+    assert "favorites_window" in summary
+    assert "kept=0" in summary
+    assert "15m–6h" in summary or "15m-6h" in summary or "window" in summary

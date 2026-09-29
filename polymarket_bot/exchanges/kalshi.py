@@ -218,6 +218,26 @@ class KalshiClient:
                 break
         return rows[offset : offset + limit]
 
+    def list_series(self, *, category: str | None = None, max_pages: int = 8) -> list[dict[str, Any]]:
+        """Public GET /series. Used to find KXHIGH* / KXRAIN* without paging all markets."""
+        rows: list[dict[str, Any]] = []
+        cursor: str | None = None
+        pages = 0
+        while pages < max_pages:
+            params: dict[str, Any] = {}
+            if category:
+                params["category"] = category
+            if cursor:
+                params["cursor"] = cursor
+            payload = self._get(self.data_base_url, "/series", params)
+            pages += 1
+            batch = payload.get("series") or []
+            rows.extend(batch if isinstance(batch, list) else [])
+            cursor = payload.get("cursor") or None
+            if not batch or not cursor:
+                break
+        return rows
+
     def book(self, slug: str) -> dict[str, Any]:
         return self._get(self.data_base_url, f"/markets/{slug}/orderbook", {"depth": 10})
 
@@ -390,21 +410,22 @@ class KalshiClient:
         post_only: bool = True,
         client_order_id: str | None = None,
     ) -> dict[str, Any]:
+        from polymarket_bot.kalshi_orders import create_order_v2_body
+
         cid = client_order_id or f"{CLIENT_ORDER_PREFIX}{uuid.uuid4().hex}"
+        body = create_order_v2_body(
+            ticker=ticker,
+            side=side,
+            price=price,
+            count=count,
+            post_only=post_only,
+            client_order_id=cid,
+        )
         result = self.signed_demo(
             "POST",
             "/portfolio/events/orders",
             confirm_demo=confirm_demo,
-            body={
-                "ticker": ticker,
-                "side": side,
-                "count": str(count),
-                "price": str(price),
-                "time_in_force": "good_till_canceled",
-                "self_trade_prevention_type": "taker_at_cross",
-                "post_only": post_only,
-                "client_order_id": cid,
-            },
+            body=body,
         )
         order = result.get("order") if isinstance(result.get("order"), dict) else result
         oid = order.get("order_id") or order.get("id")
