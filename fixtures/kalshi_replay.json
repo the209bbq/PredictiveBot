@@ -1,0 +1,86 @@
+{
+  "venue": "kalshi",
+  "ticks": [
+    {
+      "items": [
+        {
+          "market": {
+            "ticker": "KXDEMO-COIN",
+            "slug": "KXDEMO-COIN",
+            "title": "Demo coin flip",
+            "yes_sub_title": "Yes",
+            "event_title": "Demo coin flip",
+            "status": "active",
+            "hoursFromNow": 720,
+            "yes_bid_dollars": "0.4900",
+            "yes_ask_dollars": "0.5100",
+            "last_price_dollars": "0.5000",
+            "volume_fp": "25000.00",
+            "fee_type": "quadratic",
+            "fee_multiplier": 1
+          },
+          "book": {
+            "orderbook_fp": {
+              "yes_dollars": [["0.4900", "80.00"], ["0.4800", "120.00"]],
+              "no_dollars": [["0.4900", "80.00"], ["0.4800", "120.00"]]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "items": [
+        {
+          "market": {
+            "ticker": "KXDEMO-COIN",
+            "slug": "KXDEMO-COIN",
+            "title": "Demo coin flip",
+            "yes_sub_title": "Yes",
+            "event_title": "Demo coin flip",
+            "status": "active",
+            "hoursFromNow": 720,
+            "yes_bid_dollars": "0.4600",
+            "yes_ask_dollars": "0.5000",
+            "last_price_dollars": "0.4700",
+            "volume_fp": "25120.00",
+            "fee_type": "quadratic",
+            "fee_multiplier": 1
+          },
+          "book": {
+            "orderbook_fp": {
+              "yes_dollars": [["0.4600", "90.00"]],
+              "no_dollars": [["0.5000", "90.00"]]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "items": [
+        {
+          "market": {
+            "ticker": "KXDEMO-COIN",
+            "slug": "KXDEMO-COIN",
+            "title": "Demo coin flip",
+            "yes_sub_title": "Yes",
+            "event_title": "Demo coin flip",
+            "status": "active",
+            "hoursFromNow": 720,
+            "yes_bid_dollars": "0.5300",
+            "yes_ask_dollars": "0.5500",
+            "last_price_dollars": "0.5400",
+            "volume_fp": "25200.00",
+            "fee_type": "quadratic",
+            "fee_multiplier": 1
+          },
+          "book": {
+            "orderbook_fp": {
+              "yes_dollars": [["0.5300", "70.00"]],
+              "no_dollars": [["0.4500", "70.00"]]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

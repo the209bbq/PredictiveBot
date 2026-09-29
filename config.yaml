@@ -1,0 +1,267 @@
+# Conservative defaults. Kalshi is the only active venue.
+
+dry_run: true
+# Production trading is never implemented. True makes the process raise.
+live_trading_enabled: false
+
+# Scan/paper/demo run on Kalshi only. The Polymarket US adapter stays in the
+# repo but is not constructed, fetched, or shown unless this is true.
+exchange: kalshi
+polymarket_us_enabled: false
+# paper | demo | live. Market-risk cap is 0.40 in every environment.
+environment: paper
+
+# Master switch. `pmbot trading off` pauses quoting without editing this file.
+trading:
+  enabled: true
+  toggle_path: state/trading_toggle.json
+  lock_path: state/trading.lock
+
+api:
+  gateway_base_url: https://gateway.polymarket.us
+  api_base_url: https://api.polymarket.us
+  request_timeout_seconds: 30
+  max_retries: 4
+  # Unused while polymarket_us_enabled is false.
+  min_request_interval_seconds: 0.35
+
+kalshi:
+  # Public production market data (no keys). Orders are never sent here.
+  market_data_base_url: https://external-api.kalshi.com/trade-api/v2
+  # Working demo host. external-api.demo.kalshi.co is a documented fallback.
+  demo_base_url: https://demo-api.kalshi.co/trade-api/v2
+  demo_orders_enabled: false
+  # Basic tier: 200 read tokens/s, 10 tokens/GET => 20 GET/s. Stay below it.
+  min_request_interval_seconds: 0.08
+  # Extra gap between GET /markets?series_ticker= so a scan does not burst into 429s.
+  series_list_interval_seconds: 0.35
+  tick_size: 0.01
+
+scanner:
+  active_only: true
+  include_closed: false
+  # Demo/prod list 40k+ open markets. Paginate and rank before fetching books.
+  max_markets_to_list: 800
+  list_page_size: 200
+  max_list_pages: 6
+  # Fetch fewer books (Kalshi last-trade adds a second call per market).
+  max_book_fetches: 10
+  min_volume_shares: 0
+  min_bid_depth_contracts: 20
+  min_ask_depth_contracts: 20
+  max_spread: 0.05
+  min_hours_to_resolution: 1
+  top_n: 12
+
+paper:
+  # two_sided_maker stays selectable. kalshi-demo overlays favorites_maker.
+  strategy: two_sided_maker
+  starting_cash: 1000.00
+  quote_size_contracts: 1
+  max_markets: 5
+  ticks: 6
+  # Poll for books/tape. Re-quotes use maker.requote_interval_seconds, not this.
+  poll_interval_seconds: 2.0
+  tick_size_fallback: 0.01
+  maker:
+    enabled: true
+    # Cap how far from mid we will quote on a wide book.
+    half_spread: 0.02
+    inventory_skew_per_contract: 0.0004
+    # Join the touch on 1–2 tick books; improve this many ticks when spread >= 3 ticks.
+    improve_ticks: 1
+    # Re-quote if the touch moves by this many ticks, or after this interval (10–60s).
+    requote_on_touch_ticks: 1
+    requote_interval_seconds: 30
+  series:
+    # Maker universe. Feeds the risk-score gate; does not replace it.
+    enabled: true
+    allow:
+      - KXHIGH
+      - KXBRENTW
+      - KXRT
+      - KXU3
+      - KXPAYROLLS
+      - KXDEMO
+    # Off: backtest only covered the 24h cutoff. Opt in to quote resolution-day HIGH.
+    kxhigh_resolution_day_enabled: false
+    # Configurable but off by default (crypto, gas, Truth Social).
+    disabled:
+      - KXTRUTHSOCIAL
+      - KXBTC
+      - KXETHD
+      - KXAAAGASD
+      - KXAAAGASW
+    deny:
+      - KXNFL
+      - KXNBA
+      - KXMLB
+      - KXNHL
+      - KXFEDDECISION
+      - KXFED
+      - KXCPI
+      - KXWTI
+      - KXINXU
+      - KXBTC15M
+      - KXBTCD
+      - KXXRPD
+      - KXRAIN
+    skip_maker_fee_series: true
+    # Gas stays off the allowlist. Windows apply if it is ever re-enabled.
+    # Daily trading closes 8:59 PM PT the night before. AAA print/settlement is
+    # ~4:06 AM PT (outliers ~6:10 AM) — the risk is evening pre-close, not the print.
+    # Weekly KXAAAGASW settles Monday ~5:39–6:11 AM PT.
+    aaa_evening_stop: "20:00"   # daily only: 8:00 PM PT until close
+    aaa_close: "20:59"
+    aaa_morning_blackout_start: "03:30"  # any AAA still open, including weekly
+    aaa_morning_blackout_end: "07:00"
+    # KXBRENTW: Pyth Index.BRENT/USD 24/7. Times are America/Los_Angeles.
+    brent:
+      weekend_halt_start: "14:00"   # Friday 2:00 PM PT through Sunday 3:00 PM PT
+      weekend_halt_end: "15:00"
+      unwind_start: "12:00"         # reduce-only last 2 hours before Friday settle
+      friday_settle: "14:00"
+      recurring_blackouts:
+        - name: api_inventory
+          weekday: tue
+          start: "13:00"
+          end: "14:30"
+        - name: eia_weekly
+          weekday: wed
+          start: "07:00"
+          end: "08:30"
+      dated_blackouts:
+        - name: eia_weekly
+          at: "2026-10-15T09:00:00"  # delayed EIA; naive timestamps are PT
+          minutes: 90
+          replaces: eia_weekly       # skip that week's Wednesday window
+        - name: eia_steo
+          at: "2026-10-06T09:00:00"
+          minutes: 90
+        - name: opec_jmmc
+          date: "2026-10-04"
+          all_day: true
+    event_blackout_minutes: 30
+    # Naive timestamps are America/Los_Angeles (DST-aware via zoneinfo).
+    events:
+      - name: jobs
+        at: "2026-10-02T05:30:00"  # 5:30 AM PT
+        series: [KXHIGH, KXRT, KXBRENTW, KXU3, KXPAYROLLS]
+      - name: cpi
+        at: "2026-10-14T05:30:00"  # 5:30 AM PT
+        series: [KXRT, KXBTC, KXETHD]
+      - name: fomc
+        at: "2026-10-28T11:00:00"  # 11 AM PT
+        series: [KXFED, KXFEDDECISION]
+  near_resolution:
+    enabled: true
+    min_price: 0.94
+    max_price: 0.98
+    max_hours_to_resolution: 36
+    min_hours_to_resolution: 0.5
+    quote_size_contracts: 5
+  risk:
+    max_position_per_market: 40
+    max_gross_position: 120
+    max_daily_loss_usd: 50
+    max_daily_capital_in_use_usd: 100
+    cancel_on_price_jump: 0.08
+    maker_min_hours_to_resolution: 24
+    # Gas uses AAA print blackout instead of 24h. KXHIGH same-day is opt-in.
+    maker_min_hours_overrides:
+      KXAAAGASD: 0
+      KXAAAGASW: 0
+    # Worst-case $ at risk / account value. Secondary safeguard; default 40%.
+    max_account_risk_pct: 0.40
+    # Required to set max_account_risk_pct above 0.40.
+    allow_account_risk_above_hard_max: false
+    # Per-market RISK SCORE 0–1 (100% = extremely volatile / live). Primary gate.
+    # Only quote markets strictly below this. Default 0.40; hard max 0.50.
+    max_market_risk_score: 0.40
+    # Required to set max_market_risk_score above 0.50.
+    allow_market_risk_above_hard_max: false
+  fills:
+    require_strict_trade_through: true
+  # Maker-only weather favorites (default for environments.demo / kalshi-demo).
+  # KXHIGH settles on the official NWS station high, not a Weather Company
+  # forecast. Station traps / revisions are a known risk. No WH / Truth feeds.
+  # late_entry_enabled is this mode's own 15m–6h window; it does not flip
+  # two-sided `kxhigh_resolution_day_enabled` (that stays false).
+  favorites:
+    min_price: 0.80
+    max_price: 0.97
+    allow_yes: false
+    sides: ["no"]
+    max_hours_to_close: 6
+    min_hours_to_close: 0.25
+    quote_size_min: 1
+    quote_size_max: 3
+    max_position_per_market: 5
+    max_depth_fraction: 0.25
+    improve_ticks: 1
+    exit_if_below: null
+    allow_maker_fee_series: false
+    late_entry_enabled: true
+    fill_tag: favorites_late
+    fills_path: data/favorites_fills.jsonl
+    # Re-scan the 15m–6h window this often; quote every kept market up to max_markets.
+    rescan_minutes: 10
+    max_markets: 5
+    allow:
+      - KXHIGH
+      - KXRAIN
+
+compare:
+  # Off. Cross-venue compare does not run, fetch, or appear on the dashboard.
+  enabled: false
+  max_markets_each: 20
+  min_title_score: 0.34
+  # Dollars PER CONTRACT after both venues' taker fees. Not a 100-contract clip total.
+  # 0.01 = one cent per contract. A $0.01 gap on 100 contracts is 0.0001 $/contract.
+  min_net_edge: 0.01
+  # Clip used only to show dollar totals in the report (fees are scaled to this size).
+  contract_size: 100
+
+logging:
+  level: INFO
+  jsonl_path: logs/decisions.jsonl
+  report_path: logs/paper_report.txt
+  state_path: logs/paper_state.json
+  demo_state_path: logs/demo_state.json
+
+dashboard:
+  host: 127.0.0.1
+  port: 8787
+  refresh_seconds: 3
+  pnl_path: logs/pnl_history.jsonl
+
+record:
+  interval_seconds: 5
+  book_levels: 5
+  format: jsonl
+  directory: data/recordings
+  rotate_mb: 64
+  max_files: 20
+  # Unauthenticated public GETs only. production books are usable; demo books are thin.
+  data_host: production
+
+environments:
+  demo:
+    scanner:
+      min_hours_to_resolution: 0.25
+      min_bid_depth_contracts: 4
+      min_ask_depth_contracts: 4
+    paper:
+      strategy: favorites_maker
+      series:
+        allow:
+          - KXHIGH
+          - KXRAIN
+      risk:
+        max_market_risk_score: 0.40
+        allow_market_risk_above_hard_max: false
+  live:
+    paper:
+      risk:
+        max_market_risk_score: 0.40
+        allow_market_risk_above_hard_max: false

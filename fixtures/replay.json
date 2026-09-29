@@ -1,0 +1,294 @@
+{
+  "ticks": [
+    {
+      "items": [
+        {
+          "market": {
+            "id": "maker-1",
+            "slug": "demo-coin-flip",
+            "question": "Demo coin flip market",
+            "title": "Demo coin flip",
+            "category": "other",
+            "status": "MARKET_STATUS_OPEN",
+            "active": true,
+            "closed": false,
+            "hoursFromNow": 720,
+            "orderPriceMinTickSize": 0.001,
+            "feeCoefficient": 0.0695,
+            "bestBidQuote": {"value": "0.4900", "currency": "USD"},
+            "bestAskQuote": {"value": "0.5100", "currency": "USD"}
+          },
+          "book": {
+            "marketData": {
+              "marketSlug": "demo-coin-flip",
+              "state": "MARKET_STATE_OPEN",
+              "bids": [
+                {"px": {"value": "0.4900", "currency": "USD"}, "qty": "80.0000"},
+                {"px": {"value": "0.4800", "currency": "USD"}, "qty": "120.0000"}
+              ],
+              "offers": [
+                {"px": {"value": "0.5100", "currency": "USD"}, "qty": "80.0000"},
+                {"px": {"value": "0.5200", "currency": "USD"}, "qty": "120.0000"}
+              ],
+              "stats": {
+                "lastTradePx": {"value": "0.5000", "currency": "USD"},
+                "sharesTraded": "25000.0000",
+                "openInterest": "40000.0000",
+                "notionalTraded": {"value": "12500.0000", "currency": "USD"}
+              }
+            }
+          },
+          "bbo": {
+            "marketData": {
+              "marketSlug": "demo-coin-flip",
+              "bestBid": {"value": "0.4900", "currency": "USD"},
+              "bestAsk": {"value": "0.5100", "currency": "USD"},
+              "lastTradePx": {"value": "0.5000", "currency": "USD"},
+              "sharesTraded": "25000.0000",
+              "openInterest": "40000.0000",
+              "bidShares": "200",
+              "askShares": "200",
+              "state": "MARKET_STATE_OPEN"
+            }
+          }
+        },
+        {
+          "market": {
+            "id": "near-1",
+            "slug": "demo-favorite",
+            "question": "Demo near-resolution favorite",
+            "title": "Demo favorite",
+            "category": "sports",
+            "status": "MARKET_STATUS_OPEN",
+            "active": true,
+            "closed": false,
+            "hoursFromNow": 12,
+            "orderPriceMinTickSize": 0.001,
+            "feeCoefficient": 0.0695,
+            "bestBidQuote": {"value": "0.9600", "currency": "USD"},
+            "bestAskQuote": {"value": "0.9700", "currency": "USD"}
+          },
+          "book": {
+            "marketData": {
+              "marketSlug": "demo-favorite",
+              "state": "MARKET_STATE_OPEN",
+              "bids": [
+                {"px": {"value": "0.9600", "currency": "USD"}, "qty": "50.0000"}
+              ],
+              "offers": [
+                {"px": {"value": "0.9700", "currency": "USD"}, "qty": "40.0000"}
+              ],
+              "stats": {
+                "lastTradePx": {"value": "0.9650", "currency": "USD"},
+                "sharesTraded": "8000.0000",
+                "openInterest": "15000.0000"
+              }
+            }
+          },
+          "bbo": {
+            "marketData": {
+              "marketSlug": "demo-favorite",
+              "bestBid": {"value": "0.9600", "currency": "USD"},
+              "bestAsk": {"value": "0.9700", "currency": "USD"},
+              "lastTradePx": {"value": "0.9650", "currency": "USD"},
+              "sharesTraded": "8000.0000",
+              "openInterest": "15000.0000",
+              "bidShares": "50",
+              "askShares": "40",
+              "state": "MARKET_STATE_OPEN"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "items": [
+        {
+          "market": {
+            "id": "maker-1",
+            "slug": "demo-coin-flip",
+            "question": "Demo coin flip market",
+            "title": "Demo coin flip",
+            "category": "other",
+            "status": "MARKET_STATUS_OPEN",
+            "active": true,
+            "closed": false,
+            "hoursFromNow": 720,
+            "orderPriceMinTickSize": 0.001,
+            "feeCoefficient": 0.0695,
+            "bestBidQuote": {"value": "0.4600", "currency": "USD"},
+            "bestAskQuote": {"value": "0.5000", "currency": "USD"}
+          },
+          "book": {
+            "marketData": {
+              "marketSlug": "demo-coin-flip",
+              "state": "MARKET_STATE_OPEN",
+              "bids": [
+                {"px": {"value": "0.4600", "currency": "USD"}, "qty": "90.0000"}
+              ],
+              "offers": [
+                {"px": {"value": "0.5000", "currency": "USD"}, "qty": "90.0000"}
+              ],
+              "stats": {
+                "lastTradePx": {"value": "0.4700", "currency": "USD"},
+                "sharesTraded": "25120.0000",
+                "openInterest": "40000.0000"
+              }
+            }
+          },
+          "bbo": {
+            "marketData": {
+              "marketSlug": "demo-coin-flip",
+              "bestBid": {"value": "0.4600", "currency": "USD"},
+              "bestAsk": {"value": "0.5000", "currency": "USD"},
+              "lastTradePx": {"value": "0.4700", "currency": "USD"},
+              "sharesTraded": "25120.0000",
+              "bidShares": "90",
+              "askShares": "90",
+              "state": "MARKET_STATE_OPEN"
+            }
+          }
+        },
+        {
+          "market": {
+            "id": "near-1",
+            "slug": "demo-favorite",
+            "question": "Demo near-resolution favorite",
+            "title": "Demo favorite",
+            "category": "sports",
+            "status": "MARKET_STATUS_OPEN",
+            "active": true,
+            "closed": false,
+            "hoursFromNow": 12,
+            "orderPriceMinTickSize": 0.001,
+            "feeCoefficient": 0.0695,
+            "bestBidQuote": {"value": "0.9500", "currency": "USD"},
+            "bestAskQuote": {"value": "0.9650", "currency": "USD"}
+          },
+          "book": {
+            "marketData": {
+              "marketSlug": "demo-favorite",
+              "state": "MARKET_STATE_OPEN",
+              "bids": [
+                {"px": {"value": "0.9500", "currency": "USD"}, "qty": "40.0000"}
+              ],
+              "offers": [
+                {"px": {"value": "0.9650", "currency": "USD"}, "qty": "40.0000"}
+              ],
+              "stats": {
+                "lastTradePx": {"value": "0.9550", "currency": "USD"},
+                "sharesTraded": "8100.0000"
+              }
+            }
+          },
+          "bbo": {
+            "marketData": {
+              "marketSlug": "demo-favorite",
+              "bestBid": {"value": "0.9500", "currency": "USD"},
+              "bestAsk": {"value": "0.9650", "currency": "USD"},
+              "lastTradePx": {"value": "0.9550", "currency": "USD"},
+              "sharesTraded": "8100.0000",
+              "bidShares": "40",
+              "askShares": "40",
+              "state": "MARKET_STATE_OPEN"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "items": [
+        {
+          "market": {
+            "id": "maker-1",
+            "slug": "demo-coin-flip",
+            "question": "Demo coin flip market",
+            "title": "Demo coin flip",
+            "category": "other",
+            "status": "MARKET_STATUS_OPEN",
+            "active": true,
+            "closed": false,
+            "hoursFromNow": 720,
+            "orderPriceMinTickSize": 0.001,
+            "feeCoefficient": 0.0695,
+            "bestBidQuote": {"value": "0.5300", "currency": "USD"},
+            "bestAskQuote": {"value": "0.5500", "currency": "USD"}
+          },
+          "book": {
+            "marketData": {
+              "marketSlug": "demo-coin-flip",
+              "state": "MARKET_STATE_OPEN",
+              "bids": [
+                {"px": {"value": "0.5300", "currency": "USD"}, "qty": "70.0000"}
+              ],
+              "offers": [
+                {"px": {"value": "0.5500", "currency": "USD"}, "qty": "70.0000"}
+              ],
+              "stats": {
+                "lastTradePx": {"value": "0.5400", "currency": "USD"},
+                "sharesTraded": "25200.0000"
+              }
+            }
+          },
+          "bbo": {
+            "marketData": {
+              "marketSlug": "demo-coin-flip",
+              "bestBid": {"value": "0.5300", "currency": "USD"},
+              "bestAsk": {"value": "0.5500", "currency": "USD"},
+              "lastTradePx": {"value": "0.5400", "currency": "USD"},
+              "sharesTraded": "25200.0000",
+              "bidShares": "70",
+              "askShares": "70",
+              "state": "MARKET_STATE_OPEN"
+            }
+          }
+        },
+        {
+          "market": {
+            "id": "near-1",
+            "slug": "demo-favorite",
+            "question": "Demo near-resolution favorite",
+            "title": "Demo favorite",
+            "category": "sports",
+            "status": "MARKET_STATUS_OPEN",
+            "active": true,
+            "closed": false,
+            "hoursFromNow": 12,
+            "orderPriceMinTickSize": 0.001,
+            "feeCoefficient": 0.0695,
+            "bestBidQuote": {"value": "0.9400", "currency": "USD"},
+            "bestAskQuote": {"value": "0.9550", "currency": "USD"}
+          },
+          "book": {
+            "marketData": {
+              "marketSlug": "demo-favorite",
+              "state": "MARKET_STATE_OPEN",
+              "bids": [
+                {"px": {"value": "0.9400", "currency": "USD"}, "qty": "30.0000"}
+              ],
+              "offers": [
+                {"px": {"value": "0.9550", "currency": "USD"}, "qty": "30.0000"}
+              ],
+              "stats": {
+                "lastTradePx": {"value": "0.9450", "currency": "USD"},
+                "sharesTraded": "8200.0000"
+              }
+            }
+          },
+          "bbo": {
+            "marketData": {
+              "marketSlug": "demo-favorite",
+              "bestBid": {"value": "0.9400", "currency": "USD"},
+              "bestAsk": {"value": "0.9550", "currency": "USD"},
+              "lastTradePx": {"value": "0.9450", "currency": "USD"},
+              "sharesTraded": "8200.0000",
+              "bidShares": "30",
+              "askShares": "30",
+              "state": "MARKET_STATE_OPEN"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
