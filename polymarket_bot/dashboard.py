@@ -128,9 +128,11 @@ async function load(){
   const daily = s.daily_limits || s.trading || {};
   const hit = daily.daily_loss_limit_hit;
   el('exposure',
+    '<div class="row">'+
     '<div class="card">Account exposure<br><b>'+(exp.pct_display||pct(exp.pct))+'</b><br><span class="muted">cap '+(exp.cap_display||'')+'</span></div>'+
     '<div class="card">Capital in use<br><b>'+money(daily.daily_capital_in_use_usd)+'</b><br><span class="muted">limit '+money(daily.max_daily_capital_in_use_usd)+'</span></div>'+
-    '<div class="card'+(hit?' live':'')+'">Daily P&amp;L (PT)<br><b>'+(hit?'daily loss limit hit':money(daily.daily_pnl_usd))+'</b><br><span class="muted">limit -'+money(daily.max_daily_loss_usd)+'</span></div>'
+    '<div class="card'+(hit?' live':'')+'">Daily P&amp;L (PT)<br><b>'+(hit?'daily loss limit hit':money(daily.daily_pnl_usd))+'</b><br><span class="muted">limit -'+money(daily.max_daily_loss_usd)+'</span></div>'+
+    '</div>'
   );
   el('positions', table((s.positions||[]).map(p=>[p.market, p.qty, p.avg_price]), ['market','qty','avg']));
   el('orders', table((s.resting_orders||[]).map(o=>[o.market||o.ticker, o.side, o.price, o.qty||o.count]), ['market','side','price','qty']));
