@@ -13,7 +13,7 @@ from polymarket_bot.config import load_config
 from polymarket_bot.dashboard import serve_dashboard
 from polymarket_bot.demo.session import assert_demo_order_within_risk, format_demo_report, run_demo_session
 from polymarket_bot.market_risk import MarketRiskError, format_score
-from polymarket_bot.exchanges.factory import build_client
+from polymarket_bot.exchanges.factory import COMPARE_DISABLED, build_client, compare_is_enabled
 from polymarket_bot.exchanges.kalshi import KalshiClient
 from polymarket_bot.guard import DemoOrderError, LiveTradingDisabled
 from polymarket_bot.live import start_live_trading
@@ -98,6 +98,9 @@ def cmd_report(args: argparse.Namespace) -> int:
 
 def cmd_compare(args: argparse.Namespace) -> int:
     config = load_config(args.config)
+    if not compare_is_enabled(config):
+        print(COMPARE_DISABLED, file=sys.stderr)
+        return 2
     kalshi = build_client(config, source=args.kalshi_source, exchange="kalshi", fixture=args.kalshi_fixture)
     pm = build_client(
         config,
@@ -241,20 +244,20 @@ def cmd_live(_args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="pmbot",
-        description="Kalshi-primary paper bot with Polymarket US as a second venue. Production trading disabled.",
+        description="Kalshi paper bot. Production trading disabled.",
     )
     parser.add_argument("--config", default=None)
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     scan = sub.add_parser("scan", help="List liquid markets (public data)")
-    scan.add_argument("--exchange", default=None, help="kalshi (default) or polymarket_us")
+    scan.add_argument("--exchange", default=None, help="kalshi (default). polymarket_us is disabled.")
     scan.add_argument("--source", default="live", choices=["live", "fixture", "replay", "kalshi-demo-data"])
     scan.add_argument("--fixture", default=None)
     scan.add_argument("--json", action="store_true")
     scan.set_defaults(func=cmd_scan)
 
     paper = sub.add_parser("paper", help="Simulated paper session")
-    paper.add_argument("--exchange", default=None, help="kalshi (default) or polymarket_us")
+    paper.add_argument("--exchange", default=None, help="kalshi (default). polymarket_us is disabled.")
     paper.add_argument("--source", default="replay", choices=["live", "fixture", "replay", "kalshi-demo-data"])
     paper.add_argument("--fixture", default=None)
     paper.add_argument("--ticks", type=int, default=None)
@@ -265,7 +268,10 @@ def build_parser() -> argparse.ArgumentParser:
     report.add_argument("--state", default=None)
     report.set_defaults(func=cmd_report)
 
-    compare = sub.add_parser("compare", help="Read-only Kalshi vs Polymarket US fee-adjusted gaps")
+    compare = sub.add_parser(
+        "compare",
+        help="Disabled. Kalshi vs Polymarket US gaps (requires compare.enabled)",
+    )
     compare.add_argument("--kalshi-source", default="live")
     compare.add_argument("--pm-source", default="live")
     compare.add_argument("--kalshi-fixture", default=None)

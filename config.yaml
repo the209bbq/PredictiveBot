@@ -1,11 +1,13 @@
-# Conservative defaults. Strategy/risk/paper knobs are shared across venues.
+# Conservative defaults. Kalshi is the only active venue.
 
 dry_run: true
 # Production trading is never implemented. True makes the process raise.
 live_trading_enabled: false
 
-# Primary venue for scan/paper. polymarket_us remains available via --exchange.
+# Scan/paper/demo run on Kalshi only. The Polymarket US adapter stays in the
+# repo but is not constructed, fetched, or shown unless this is true.
 exchange: kalshi
+polymarket_us_enabled: false
 
 # Master switch. `pmbot trading off` pauses quoting without editing this file.
 trading:
@@ -18,7 +20,7 @@ api:
   api_base_url: https://api.polymarket.us
   request_timeout_seconds: 30
   max_retries: 4
-  # Polymarket US Cloudflare 429s hard; pace book fetches.
+  # Unused while polymarket_us_enabled is false.
   min_request_interval_seconds: 0.35
 
 kalshi:
@@ -38,7 +40,7 @@ scanner:
   max_markets_to_list: 800
   list_page_size: 200
   max_list_pages: 6
-  # Fetch fewer books (PM 429s; Kalshi last-trade adds a second call per market).
+  # Fetch fewer books (Kalshi last-trade adds a second call per market).
   max_book_fetches: 10
   min_volume_shares: 0
   min_bid_depth_contracts: 20
@@ -130,6 +132,8 @@ paper:
     require_strict_trade_through: true
 
 compare:
+  # Off. Cross-venue compare does not run, fetch, or appear on the dashboard.
+  enabled: false
   max_markets_each: 20
   min_title_score: 0.34
   # Dollars PER CONTRACT after both venues' taker fees. Not a 100-contract clip total.

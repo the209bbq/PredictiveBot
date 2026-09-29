@@ -79,8 +79,6 @@ svg { background:#12181f; border-radius:6px; }
 <div id="strategy"></div>
 <h2>Alerts / errors</h2>
 <div id="alerts"></div>
-<h2>Compare</h2>
-<div id="compare"></div>
 <script>
 const refreshMs = %REFRESH_MS%;
 let toggling = false;
@@ -137,7 +135,6 @@ async function load(){
   }), ['market','risk','components']));
   el('strategy', '<pre>'+JSON.stringify({...(s.strategy||{}), exchange:s.exchange||null},null,2)+'</pre>');
   el('alerts', table((s.alerts||[]).map(a=>[a.ts||'', a.action||'', a.error||a.reason||JSON.stringify(a)]), ['ts','action','detail']));
-  el('compare', '<pre>'+ (s.compare || '(none)') +'</pre>');
 }
 document.getElementById('toggle').addEventListener('change', async (ev)=>{
   if (toggling) return;
@@ -304,10 +301,6 @@ def build_snapshot(
             if action.startswith("ALERT") or row.get("alert") or "error" in action:
                 alerts.append(row)
     alerts = alerts[-15:]
-    compare = ""
-    cmp_path = Path("logs/compare_report.txt")
-    if cmp_path.exists():
-        compare = cmp_path.read_text()[-4000:]
     env = env_name(demo=bool(state.get("demo") or source == "demo"), live=False)
     rows = load_history(config.dashboard.pnl_path, env)
     if not rows and state:
@@ -350,7 +343,6 @@ def build_snapshot(
             "near_fills": (state.get("near_resolution") or {}).get("fill_count"),
         },
         "alerts": alerts,
-        "compare": compare,
         "pnl": pnl,
     }
 

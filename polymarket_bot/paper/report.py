@@ -89,6 +89,6 @@ def format_report(state: dict[str, Any]) -> str:
         f"  Worse max drawdown of the two books: {_money(max(dd_m, dd_n))}",
         "",
         "Fills are simulated conservatively (trade-through or book-cross only).",
-        "Kalshi maker cash is usually $0 (or a maker fee); Polymarket US credits a rebate.",
+        "Kalshi maker cash is usually $0 unless the series charges maker fees.",
     ])
     return "\n".join(lines) + "\n"

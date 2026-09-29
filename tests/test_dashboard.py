@@ -61,6 +61,7 @@ def test_build_snapshot_includes_risk_and_pnl(tmp_path):
     assert snap["exposure"]["pct_display"] == "12.00%"
     assert snap["pnl"]["all_time"]["net_pnl"] == Decimal("5.00")
     assert snap["pnl"]["all_time"]["realized"] == Decimal("2.00")
+    assert "compare" not in snap
 
 
 def test_dashboard_http_toggle_and_auth(tmp_path, monkeypatch):

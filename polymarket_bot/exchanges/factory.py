@@ -10,6 +10,16 @@ from polymarket_bot.exchanges.polymarket import PolymarketClient
 from polymarket_bot.market_data.fixture_client import FixtureClient
 from polymarket_bot.market_data.replay_client import ReplayClient
 
+_PM_VENUES = {"polymarket_us", "polymarket"}
+PM_DISABLED = (
+    "Polymarket US is disabled. Kalshi is the only active venue. "
+    "Set polymarket_us_enabled: true in config.yaml to use the leftover adapter."
+)
+COMPARE_DISABLED = (
+    "Cross-venue compare is disabled (Kalshi only). "
+    "Set compare.enabled and polymarket_us_enabled in config.yaml to run it."
+)
+
 
 def default_fixture(exchange: str) -> Path:
     if exchange == "kalshi":
@@ -23,6 +33,19 @@ def default_replay(exchange: str) -> Path:
     return Path("fixtures/replay.json")
 
 
+def is_polymarket_venue(venue: str | None) -> bool:
+    return (venue or "").lower() in _PM_VENUES
+
+
+def assert_venue_enabled(config: AppConfig, venue: str | None) -> None:
+    if is_polymarket_venue(venue) and not config.polymarket_us_enabled:
+        raise SystemExit(PM_DISABLED)
+
+
+def compare_is_enabled(config: AppConfig) -> bool:
+    return bool(config.compare.enabled and config.polymarket_us_enabled)
+
+
 def build_client(
     config: AppConfig,
     *,
@@ -31,6 +54,7 @@ def build_client(
     fixture: str | None = None,
 ):
     venue = (exchange or config.exchange).lower()
+    assert_venue_enabled(config, venue)
     if source == "replay":
         path = Path(fixture or default_replay(venue))
         if path.exists():
@@ -44,7 +68,7 @@ def build_client(
     if source in {"live", "public"}:
         if venue == "kalshi":
             return KalshiClient(config)
-        if venue in {"polymarket_us", "polymarket"}:
+        if is_polymarket_venue(venue):
             return PolymarketClient(config)
         raise SystemExit(f"unknown exchange {venue}")
     if source == "kalshi-demo-data":

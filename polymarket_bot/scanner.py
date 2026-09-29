@@ -1,4 +1,4 @@
-"""Read-only scanner over public Kalshi / Polymarket US markets."""
+"""Read-only scanner over public Kalshi markets."""
 
 from __future__ import annotations
 

@@ -137,6 +137,7 @@ class DashboardConfig:
 
 @dataclass(frozen=True)
 class CompareConfig:
+    enabled: bool
     max_markets_each: int
     min_title_score: float
     min_net_edge: Decimal
@@ -148,6 +149,7 @@ class AppConfig:
     dry_run: bool
     live_trading_enabled: bool
     exchange: str
+    polymarket_us_enabled: bool
     api: ApiConfig
     kalshi: KalshiConfig
     scanner: ScannerConfig
@@ -196,6 +198,7 @@ def load_config(path: str | Path | None = None) -> AppConfig:
         dry_run=bool(raw.get("dry_run", True)),
         live_trading_enabled=bool(raw.get("live_trading_enabled", False)),
         exchange=str(raw.get("exchange", "kalshi")),
+        polymarket_us_enabled=bool(raw.get("polymarket_us_enabled", False)),
         api=ApiConfig(
             gateway_base_url=str(api_raw.get("gateway_base_url", "https://gateway.polymarket.us")),
             api_base_url=str(api_raw.get("api_base_url", "https://api.polymarket.us")),
@@ -271,6 +274,7 @@ def load_config(path: str | Path | None = None) -> AppConfig:
             state_path=Path(log_raw.get("state_path", "logs/paper_state.json")),
         ),
         compare=CompareConfig(
+            enabled=bool(compare_raw.get("enabled", False)),
             max_markets_each=int(compare_raw.get("max_markets_each", 40)),
             min_title_score=float(compare_raw.get("min_title_score", 0.34)),
             min_net_edge=_dec(compare_raw.get("min_net_edge"), "0.01"),
