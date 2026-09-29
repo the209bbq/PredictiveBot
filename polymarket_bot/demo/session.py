@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import signal
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -546,6 +548,45 @@ def assert_demo_order_within_risk(
     return frac
 
 
+_STOP = threading.Event()
+_PREV_SIGNAL_HANDLERS: dict[int, Any] = {}
+
+
+def reset_demo_stop() -> None:
+    _STOP.clear()
+
+
+def request_demo_stop() -> None:
+    _STOP.set()
+
+
+def demo_stop_requested() -> bool:
+    return _STOP.is_set()
+
+
+def _on_demo_signal(signum: int, _frame: Any) -> None:
+    request_demo_stop()
+
+
+def install_demo_signal_handlers() -> None:
+    _PREV_SIGNAL_HANDLERS.clear()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            _PREV_SIGNAL_HANDLERS[sig] = signal.getsignal(sig)
+            signal.signal(sig, _on_demo_signal)
+        except (ValueError, OSError):
+            continue
+
+
+def restore_demo_signal_handlers() -> None:
+    for sig, prev in _PREV_SIGNAL_HANDLERS.items():
+        try:
+            signal.signal(sig, prev)
+        except (ValueError, OSError):
+            continue
+    _PREV_SIGNAL_HANDLERS.clear()
+
+
 def run_demo_session(
     client: KalshiClient,
     config: AppConfig,
@@ -559,6 +600,8 @@ def run_demo_session(
 ) -> dict[str, Any]:
     """Quote / re-quote / cancel on Kalshi DEMO, then verify no resting orders."""
     client._assert_demo(confirm_demo)
+    reset_demo_stop()
+    install_demo_signal_handlers()
     now = now or datetime.now(timezone.utc)
     n_ticks = ticks if ticks is not None else config.paper.ticks
     fav_mode = favorites.is_favorites_mode(config)
@@ -581,6 +624,7 @@ def run_demo_session(
         last_scan_at = now
         if not watched:
             extra = last_scan_summary() or "no scan summary"
+            restore_demo_signal_handlers()
             raise DemoOrderError(
                 "No eligible allowlisted Kalshi DEMO market in the current filters. "
                 f"{extra} Pin --ticker if you already have one."
@@ -612,6 +656,11 @@ def run_demo_session(
     live_quotes: dict[tuple[str, str], LiveQuote] = {}
     last_daily = None
     seen_fav_fills: set[str] = set()
+    stopped_by_signal = False
+    if fav_mode:
+        fills_path = favorites.favorites_fills_path(config)
+        favorites.ensure_fill_log_deduped(fills_path)
+        seen_fav_fills = {favorites.fill_key(row) for row in favorites.load_fill_rows(fills_path)}
 
     logger.log(
         "demo_start",
@@ -644,395 +693,408 @@ def run_demo_session(
             logger.log("cancel_error", error=str(exc), live=False)
 
         clock = now
-        for tick in range(n_ticks):
-            now_tick = clock if sleep is False else datetime.now(timezone.utc)
-            if fav_mode and (
-                last_scan_at is None
-                or rescan_seconds is None
-                or rescan_seconds <= 0
-                or (now_tick - last_scan_at).total_seconds() >= rescan_seconds
-            ):
+        try:
+            for tick in range(n_ticks):
+                if demo_stop_requested():
+                    stopped_by_signal = True
+                    logger.log("demo_stop", reason="signal", tick=tick, live=False, demo=True)
+                    break
+                now_tick = clock if sleep is False else datetime.now(timezone.utc)
+                if fav_mode and (
+                    last_scan_at is None
+                    or rescan_seconds is None
+                    or rescan_seconds <= 0
+                    or (now_tick - last_scan_at).total_seconds() >= rescan_seconds
+                ):
+                    try:
+                        scanned = scan_maker_universe(client, config, now=now_tick)
+                    except Exception as exc:
+                        logger.log("scan_error", error=str(exc), live=False, demo=True)
+                        scanned = []
+                    watched = merge_watched_markets(watched, scanned, max_markets, pinned=ticker)
+                    last_scan_at = now_tick
+                    logger.log(
+                        "favorites_rescan",
+                        markets=list(watched),
+                        scan=last_scan_summary(),
+                        live=False,
+                        demo=True,
+                    )
+
+                for slug in list(watched):
+                    refreshed = _refresh_snapshot(client, watched[slug], logger, now=now_tick)
+                    attach_market_risk(refreshed, history)
+                    last_scores[refreshed.slug] = score_payload(refreshed)
+                    watched[slug] = refreshed
+                    logger.log(
+                        "market_risk",
+                        market=refreshed.slug,
+                        score=format_score(refreshed.risk_score),
+                        live_game=bool((refreshed.risk_components or {}).get("live_game")),
+                        live=False,
+                        demo=True,
+                    )
+                if watched:
+                    snap = next(iter(watched.values()))
+
+                trading_on, trading_reason = trading_is_on(config)
+                last_trading = "on" if trading_on else "off"
+
                 try:
-                    scanned = scan_maker_universe(client, config, now=now_tick)
-                except Exception as exc:
-                    logger.log("scan_error", error=str(exc), live=False, demo=True)
-                    scanned = []
-                watched = merge_watched_markets(watched, scanned, max_markets, pinned=ticker)
-                last_scan_at = now_tick
-                logger.log(
-                    "favorites_rescan",
-                    markets=list(watched),
-                    scan=last_scan_summary(),
-                    live=False,
-                    demo=True,
+                    pos_payload = client.demo_positions(confirm_demo=True)
+                    _sync_portfolio(port, pos_payload)
+                    position_snapshots.append(pos_payload)
+                except DemoOrderError as exc:
+                    logger.log("position_error", error=str(exc), live=False)
+
+                try:
+                    bal_now = client.demo_balance(confirm_demo=True)
+                    avail_now = _balance_available(bal_now)
+                    if avail_now is not None:
+                        port.cash = avail_now
+                except DemoOrderError:
+                    bal_now = {}
+
+                mids_now = _position_mids(client, port, watched)
+                pos_map_now = position_map(position_snapshots[-1] if position_snapshots else {})
+                if pos_map_now:
+                    equity_now = marked_equity(
+                        port.cash,
+                        pos_map_now,
+                        mids_now,
+                        portfolio_value=portfolio_value_dollars(bal_now),
+                    )
+                else:
+                    equity_now = port.equity(mids_now)
+                resting_orders = [q.order for q in live_quotes.values()]
+                at_risk_now, _ = snapshot_account_risk(port, resting_orders, equity_now)
+                last_daily = refresh_daily_limits(
+                    config,
+                    equity=equity_now,
+                    capital_in_use=at_risk_now,
+                    now=now_tick,
                 )
+                if last_daily.just_triggered:
+                    logger.log(
+                        "ALERT",
+                        reason="daily_loss_limit",
+                        alert=True,
+                        daily_pnl=last_daily.day_pnl,
+                        limit=last_daily.loss_limit,
+                        live=False,
+                        demo=True,
+                    )
+                if last_daily.loss_halted:
+                    trading_on = False
+                    trading_reason = "daily_loss_limit"
 
-            for slug in list(watched):
-                refreshed = _refresh_snapshot(client, watched[slug], logger, now=now_tick)
-                attach_market_risk(refreshed, history)
-                last_scores[refreshed.slug] = score_payload(refreshed)
-                watched[slug] = refreshed
-                logger.log(
-                    "market_risk",
-                    market=refreshed.slug,
-                    score=format_score(refreshed.risk_score),
-                    live_game=bool((refreshed.risk_components or {}).get("live_game")),
-                    live=False,
-                    demo=True,
-                )
-            if watched:
-                snap = next(iter(watched.values()))
+                halt_book = (not trading_on) or bool(last_daily and last_daily.loss_halted)
+                if halt_book and live_quotes:
+                    cancels += _cancel_all_live_quotes(
+                        client,
+                        live_quotes,
+                        logger,
+                        reason="trading_off" if not trading_on else "daily_loss_limit",
+                    )
 
-            trading_on, trading_reason = trading_is_on(config)
-            last_trading = "on" if trading_on else "off"
-
-            try:
-                pos_payload = client.demo_positions(confirm_demo=True)
-                _sync_portfolio(port, pos_payload)
-                position_snapshots.append(pos_payload)
-            except DemoOrderError as exc:
-                logger.log("position_error", error=str(exc), live=False)
-
-            try:
-                bal_now = client.demo_balance(confirm_demo=True)
-                avail_now = _balance_available(bal_now)
-                if avail_now is not None:
-                    port.cash = avail_now
-            except DemoOrderError:
-                bal_now = {}
-
-            mids_now = _position_mids(client, port, watched)
-            pos_map_now = position_map(position_snapshots[-1] if position_snapshots else {})
-            if pos_map_now:
-                equity_now = marked_equity(
-                    port.cash,
-                    pos_map_now,
-                    mids_now,
-                    portfolio_value=portfolio_value_dollars(bal_now),
-                )
-            else:
-                equity_now = port.equity(mids_now)
-            resting_orders = [q.order for q in live_quotes.values()]
-            at_risk_now, _ = snapshot_account_risk(port, resting_orders, equity_now)
-            last_daily = refresh_daily_limits(
-                config,
-                equity=equity_now,
-                capital_in_use=at_risk_now,
-                now=now_tick,
-            )
-            if last_daily.just_triggered:
-                logger.log(
-                    "ALERT",
-                    reason="daily_loss_limit",
-                    alert=True,
-                    daily_pnl=last_daily.day_pnl,
-                    limit=last_daily.loss_limit,
-                    live=False,
-                    demo=True,
-                )
-            if last_daily.loss_halted:
-                trading_on = False
-                trading_reason = "daily_loss_limit"
-
-            halt_book = (not trading_on) or bool(last_daily and last_daily.loss_halted)
-            if halt_book and live_quotes:
-                cancels += _cancel_all_live_quotes(
-                    client,
-                    live_quotes,
-                    logger,
-                    reason="trading_off" if not trading_on else "daily_loss_limit",
-                )
-
-            placed_this_tick: list[PaperOrder] = []
-            drop: list[str] = []
-            for slug, market_snap in list(watched.items()):
-                skip_reason = None
-                mode = quote_mode(market_snap, config, now_tick)
-                if halt_book:
-                    skip_reason = "trading_off"
-                elif _market_past_close(market_snap, now_tick):
-                    skip_reason = "past_close"
-                    drop.append(slug)
-                elif market_snap.stale or not market_snap.book_fetched:
-                    skip_reason = "stale_book"
-                elif fav_mode:
-                    if not favorites.favorites_universe_ok(market_snap, config, now=now_tick):
-                        skip_reason = favorites.skip_reason(market_snap, config, now=now_tick) or "series_filter"
+                placed_this_tick: list[PaperOrder] = []
+                drop: list[str] = []
+                for slug, market_snap in list(watched.items()):
+                    skip_reason = None
+                    mode = quote_mode(market_snap, config, now_tick)
+                    if halt_book:
+                        skip_reason = "trading_off"
+                    elif _market_past_close(market_snap, now_tick):
+                        skip_reason = "past_close"
                         drop.append(slug)
+                    elif market_snap.stale or not market_snap.book_fetched:
+                        skip_reason = "stale_book"
+                    elif fav_mode:
+                        if not favorites.favorites_universe_ok(market_snap, config, now=now_tick):
+                            skip_reason = favorites.skip_reason(market_snap, config, now=now_tick) or "series_filter"
+                            drop.append(slug)
+                        elif is_live_in_game(market_snap):
+                            skip_reason = "live_in_game"
+                        elif market_over_risk_threshold(market_snap, config.paper.risk.max_market_risk_score):
+                            skip_reason = "market_risk_score"
+                    elif mode == "halt" or not maker_universe_ok(market_snap, config, now=now_tick):
+                        skip_reason = "series_filter"
                     elif is_live_in_game(market_snap):
                         skip_reason = "live_in_game"
                     elif market_over_risk_threshold(market_snap, config.paper.risk.max_market_risk_score):
                         skip_reason = "market_risk_score"
-                elif mode == "halt" or not maker_universe_ok(market_snap, config, now=now_tick):
-                    skip_reason = "series_filter"
-                elif is_live_in_game(market_snap):
-                    skip_reason = "live_in_game"
-                elif market_over_risk_threshold(market_snap, config.paper.risk.max_market_risk_score):
-                    skip_reason = "market_risk_score"
-                elif past_resolution_cutoff(market_snap, maker_min_hours(market_snap, config)):
-                    skip_reason = "resolution_cutoff"
+                    elif past_resolution_cutoff(market_snap, maker_min_hours(market_snap, config)):
+                        skip_reason = "resolution_cutoff"
 
-                if skip_reason:
-                    if skip_reason != "trading_off" or slug == next(iter(watched), None):
-                        logger.log(
-                            "skip_quote" if skip_reason != "trading_off" else "trading_paused",
-                            reason=trading_reason if skip_reason == "trading_off" else skip_reason,
-                            market=slug,
-                            score=format_score(market_snap.risk_score),
-                            live=False,
-                            demo=True,
-                        )
-                    n_cancel = _cancel_ticker_quotes(client, live_quotes, slug, logger)
-                    cancels += n_cancel
-                    continue
-
-                if fav_mode:
-                    desired = favorites.desired_quotes(
-                        market_snap,
-                        port,
-                        config,
-                        f"d{tick}",
-                        resting=[q.order for q in live_quotes.values() if q.ticker != slug],
-                        now=now_tick,
-                    )
-                else:
-                    desired = maker.desired_quotes(market_snap, port, config, f"d{tick}", now=now_tick)
-
-                desired_keys: set[tuple[str, str]] = set()
-                for order in desired:
-                    side, yes_price = v2_from_paper_order(order)
-                    key = (market_snap.slug, side)
-                    desired_keys.add(key)
-                    if v2_would_cross(side, yes_price, market_snap.best_bid, market_snap.best_ask):
-                        logger.log(
-                            "skip_quote",
-                            reason="would_cross",
-                            market=market_snap.slug,
-                            side=side,
-                            price=yes_price,
-                            contract_side=getattr(order, "contract_side", None),
-                            live=False,
-                            demo=True,
-                        )
-                        existing = live_quotes.get(key)
-                        if existing:
-                            _cancel_live_quote(client, live_quotes.pop(key), logger)
-                            cancels += 1
-                        continue
-                    existing = live_quotes.get(key)
-                    if existing and quote_target_unchanged(existing, order, side, yes_price):
-                        continue
-                    if existing:
-                        _cancel_live_quote(client, live_quotes.pop(key), logger)
-                        cancels += 1
-                    bal = {}
-                    try:
-                        bal = client.demo_balance(confirm_demo=True)
-                    except DemoOrderError:
-                        bal = start_balance
-                    equity = _account_value_from_exchange(
-                        bal,
-                        position_snapshots[-1] if position_snapshots else {},
-                        {s: watched[s].mid for s in watched},
-                    )
-                    if equity <= 0:
-                        equity = port.cash
-                    book_resting = [
-                        q.order for k, q in live_quotes.items() if k != key
-                    ] + placed_this_tick
-                    risk_reason = would_breach_risk_limits(
-                        port,
-                        book_resting,
-                        order,
-                        equity,
-                        config.paper.risk,
-                    )
-                    if risk_reason:
-                        logger.log(
-                            "skip_quote",
-                            reason=risk_reason,
-                            market=market_snap.slug,
-                            side=side,
-                            live=False,
-                            demo=True,
-                        )
-                        continue
-                    try:
-                        result = client.place_demo_order(
-                            ticker=market_snap.slug,
-                            side=side,
-                            price=format_v2_price(yes_price),
-                            count=str(int(order.qty)),
-                            confirm_demo=True,
-                            post_only=True,
-                        )
-                        oid = _order_id(result)
-                        live_quotes[key] = LiveQuote(
-                            ticker=market_snap.slug,
-                            order=order,
-                            book_side=side,
-                            yes_price=yes_price,
-                            qty=order.qty,
-                            order_id=oid,
-                        )
-                        quotes_placed += 1
-                        placed_this_tick.append(order)
-                        logger.log(
-                            "quote",
-                            strategy=favorites.STRATEGY if fav_mode else "maker",
-                            market=order.market,
-                            side=side,
-                            price=order.price,
-                            qty=order.qty,
-                            fill_tag=getattr(order, "fill_tag", "") or "",
-                            order_id=oid,
-                            live=False,
-                            demo=True,
-                        )
-                    except DemoOrderError as exc:
-                        logger.log(
-                            "quote_error",
-                            error=str(exc),
-                            market=market_snap.slug,
-                            side=side,
-                            live=False,
-                        )
-
-                for key in [k for k in live_quotes if k[0] == slug and k not in desired_keys]:
-                    _cancel_live_quote(client, live_quotes.pop(key), logger)
-                    cancels += 1
-
-            for slug in drop:
-                watched.pop(slug, None)
-                n_cancel = _cancel_ticker_quotes(client, live_quotes, slug, logger)
-                cancels += n_cancel
-            if watched:
-                snap = next(iter(watched.values()))
-
-            try:
-                fills = client.demo_fills(confirm_demo=True)
-                fill_snapshots = fills
-                logger.log("fills_snapshot", count=len(fills), live=False, demo=True)
-                if fav_mode:
-                    settings = favorites.favorites_settings(config)
-                    for row in fills:
-                        ticker_fill = str(
-                            (row or {}).get("ticker") or (row or {}).get("market_ticker") or ""
-                        )
-                        fill_snap = watched.get(ticker_fill) or snap
-                        logged = favorites.fill_row_from_exchange(
-                            row if isinstance(row, dict) else {},
-                            snap=fill_snap,
-                            placed_at=now_tick,
-                            settings=settings,
-                        )
-                        if favorites.log_favorites_fill(config, logged, seen_fav_fills):
+                    if skip_reason:
+                        if skip_reason != "trading_off" or slug == next(iter(watched), None):
                             logger.log(
-                                "favorites_fill",
-                                ticker=logged.get("ticker"),
-                                side=logged.get("side"),
-                                price=logged.get("price"),
-                                fill_tag=logged.get("fill_tag"),
+                                "skip_quote" if skip_reason != "trading_off" else "trading_paused",
+                                reason=trading_reason if skip_reason == "trading_off" else skip_reason,
+                                market=slug,
+                                score=format_score(market_snap.risk_score),
                                 live=False,
                                 demo=True,
                             )
-                    _reconcile_favorites_fills(client, config, logger, now_tick)
-            except DemoOrderError as exc:
-                logger.log("fills_error", error=str(exc), live=False)
+                        n_cancel = _cancel_ticker_quotes(client, live_quotes, slug, logger)
+                        cancels += n_cancel
+                        continue
 
-            try:
-                bal = client.demo_balance(confirm_demo=True)
-                avail = _balance_available(bal)
-                if avail is not None:
-                    port.cash = avail
-                mids = _position_mids(client, port, watched)
-                equity = _account_value_from_exchange(
-                    bal, position_snapshots[-1] if position_snapshots else {}, mids
-                )
-                if equity <= 0:
-                    equity = port.cash
-                at_risk, frac = snapshot_account_risk(
-                    port, [q.order for q in live_quotes.values()], equity
-                )
-                last_risk = {
-                    "at_risk": at_risk,
-                    "equity": equity,
-                    "pct": frac,
-                    "pct_display": format_risk_pct(frac),
-                    "cap": config.paper.risk.max_account_risk_pct,
-                    "cap_display": format_risk_pct(config.paper.risk.max_account_risk_pct),
-                }
-                logger.log(
-                    "account_risk",
-                    pct=last_risk["pct_display"],
-                    at_risk=at_risk,
-                    equity=equity,
-                    cap=last_risk["cap_display"],
-                    live=False,
-                    demo=True,
-                )
-                port.record_equity(mids)
+                    if fav_mode:
+                        desired = favorites.desired_quotes(
+                            market_snap,
+                            port,
+                            config,
+                            f"d{tick}",
+                            resting=[q.order for q in live_quotes.values() if q.ticker != slug],
+                            now=now_tick,
+                        )
+                    else:
+                        desired = maker.desired_quotes(market_snap, port, config, f"d{tick}", now=now_tick)
+
+                    desired_keys: set[tuple[str, str]] = set()
+                    for order in desired:
+                        side, yes_price = v2_from_paper_order(order)
+                        key = (market_snap.slug, side)
+                        desired_keys.add(key)
+                        if v2_would_cross(side, yes_price, market_snap.best_bid, market_snap.best_ask):
+                            logger.log(
+                                "skip_quote",
+                                reason="would_cross",
+                                market=market_snap.slug,
+                                side=side,
+                                price=yes_price,
+                                contract_side=getattr(order, "contract_side", None),
+                                live=False,
+                                demo=True,
+                            )
+                            existing = live_quotes.get(key)
+                            if existing:
+                                _cancel_live_quote(client, live_quotes.pop(key), logger)
+                                cancels += 1
+                            continue
+                        existing = live_quotes.get(key)
+                        if existing and quote_target_unchanged(existing, order, side, yes_price):
+                            continue
+                        if existing:
+                            _cancel_live_quote(client, live_quotes.pop(key), logger)
+                            cancels += 1
+                        bal = {}
+                        try:
+                            bal = client.demo_balance(confirm_demo=True)
+                        except DemoOrderError:
+                            bal = start_balance
+                        equity = _account_value_from_exchange(
+                            bal,
+                            position_snapshots[-1] if position_snapshots else {},
+                            {s: watched[s].mid for s in watched},
+                        )
+                        if equity <= 0:
+                            equity = port.cash
+                        book_resting = [
+                            q.order for k, q in live_quotes.items() if k != key
+                        ] + placed_this_tick
+                        risk_reason = would_breach_risk_limits(
+                            port,
+                            book_resting,
+                            order,
+                            equity,
+                            config.paper.risk,
+                        )
+                        if risk_reason:
+                            logger.log(
+                                "skip_quote",
+                                reason=risk_reason,
+                                market=market_snap.slug,
+                                side=side,
+                                live=False,
+                                demo=True,
+                            )
+                            continue
+                        try:
+                            result = client.place_demo_order(
+                                ticker=market_snap.slug,
+                                side=side,
+                                price=format_v2_price(yes_price),
+                                count=str(int(order.qty)),
+                                confirm_demo=True,
+                                post_only=True,
+                            )
+                            oid = _order_id(result)
+                            live_quotes[key] = LiveQuote(
+                                ticker=market_snap.slug,
+                                order=order,
+                                book_side=side,
+                                yes_price=yes_price,
+                                qty=order.qty,
+                                order_id=oid,
+                            )
+                            quotes_placed += 1
+                            placed_this_tick.append(order)
+                            logger.log(
+                                "quote",
+                                strategy=favorites.STRATEGY if fav_mode else "maker",
+                                market=order.market,
+                                side=side,
+                                price=order.price,
+                                qty=order.qty,
+                                fill_tag=getattr(order, "fill_tag", "") or "",
+                                order_id=oid,
+                                live=False,
+                                demo=True,
+                            )
+                        except DemoOrderError as exc:
+                            logger.log(
+                                "quote_error",
+                                error=str(exc),
+                                market=market_snap.slug,
+                                side=side,
+                                live=False,
+                            )
+
+                    for key in [k for k in live_quotes if k[0] == slug and k not in desired_keys]:
+                        _cancel_live_quote(client, live_quotes.pop(key), logger)
+                        cancels += 1
+
+                for slug in drop:
+                    watched.pop(slug, None)
+                    n_cancel = _cancel_ticker_quotes(client, live_quotes, slug, logger)
+                    cancels += n_cancel
+                if watched:
+                    snap = next(iter(watched.values()))
+
                 try:
-                    append_pnl(
-                        config.dashboard.pnl_path,
+                    fills = client.demo_fills(confirm_demo=True)
+                    fill_snapshots = fills
+                    logger.log("fills_snapshot", count=len(fills), live=False, demo=True)
+                    if fav_mode:
+                        settings = favorites.favorites_settings(config)
+                        for row in fills:
+                            ticker_fill = str(
+                                (row or {}).get("ticker") or (row or {}).get("market_ticker") or ""
+                            )
+                            fill_snap = watched.get(ticker_fill) or snap
+                            logged = favorites.fill_row_from_exchange(
+                                row if isinstance(row, dict) else {},
+                                snap=fill_snap,
+                                placed_at=now_tick,
+                                settings=settings,
+                            )
+                            if favorites.log_favorites_fill(config, logged, seen_fav_fills):
+                                logger.log(
+                                    "favorites_fill",
+                                    ticker=logged.get("ticker"),
+                                    side=logged.get("side"),
+                                    price=logged.get("price"),
+                                    fill_tag=logged.get("fill_tag"),
+                                    live=False,
+                                    demo=True,
+                                )
+                        _reconcile_favorites_fills(client, config, logger, now_tick)
+                except DemoOrderError as exc:
+                    logger.log("fills_error", error=str(exc), live=False)
+
+                try:
+                    bal = client.demo_balance(confirm_demo=True)
+                    avail = _balance_available(bal)
+                    if avail is not None:
+                        port.cash = avail
+                    mids = _position_mids(client, port, watched)
+                    equity = _account_value_from_exchange(
+                        bal, position_snapshots[-1] if position_snapshots else {}, mids
+                    )
+                    if equity <= 0:
+                        equity = port.cash
+                    at_risk, frac = snapshot_account_risk(
+                        port, [q.order for q in live_quotes.values()], equity
+                    )
+                    last_risk = {
+                        "at_risk": at_risk,
+                        "equity": equity,
+                        "pct": frac,
+                        "pct_display": format_risk_pct(frac),
+                        "cap": config.paper.risk.max_account_risk_pct,
+                        "cap_display": format_risk_pct(config.paper.risk.max_account_risk_pct),
+                    }
+                    logger.log(
+                        "account_risk",
+                        pct=last_risk["pct_display"],
+                        at_risk=at_risk,
+                        equity=equity,
+                        cap=last_risk["cap_display"],
+                        live=False,
+                        demo=True,
+                    )
+                    port.record_equity(mids)
+                    try:
+                        append_pnl(
+                            config.dashboard.pnl_path,
+                            {
+                                "live": False,
+                                "demo": True,
+                                "starting_cash": cash,
+                                "ending_cash": port.cash,
+                                "maker": port.to_dict(mids),
+                                "account_risk": last_risk,
+                            },
+                        )
+                    except Exception:
+                        logger.log("pnl_error", error="failed to persist pnl history", live=False, demo=True)
+                except DemoOrderError as exc:
+                    logger.log("balance_error", error=str(exc), live=False)
+
+                try:
+                    _write_demo_state(
+                        config.logging.demo_state_path,
                         {
-                            "live": False,
+                            "source": client.source_name,
+                            "venue": "kalshi",
                             "demo": True,
+                            "live": False,
+                            "running": True,
+                            "ts": datetime.now(timezone.utc).isoformat(),
+                            "tick": tick + 1,
+                            "ticks": n_ticks,
+                            "host": client.demo_base_url,
+                            "markets": list(watched),
+                            "quotes_placed": quotes_placed,
+                            "cancels": cancels,
+                            "fill_count": len(fill_snapshots),
+                            "fills": fill_snapshots[-50:],
+                            "positions": position_snapshots[-1] if position_snapshots else {},
                             "starting_cash": cash,
                             "ending_cash": port.cash,
-                            "maker": port.to_dict(mids),
+                            "maker": port.to_dict({s: watched[s].mid for s in watched} or {snap.slug: snap.mid}),
+                            "trading": last_trading,
                             "account_risk": last_risk,
+                            "account_risk_cap": format_risk_pct(config.paper.risk.max_account_risk_pct),
+                            "market_risk_cap": format_score(config.paper.risk.max_market_risk_score),
+                            "market_risk": last_scores,
+                            "daily_limits": last_daily.as_dict() if last_daily else {},
+                            "daily_loss_limit_hit": bool(last_daily and last_daily.loss_halted),
+                            "strategy": favorites.STRATEGY if fav_mode else "two_sided_maker",
+                            "resting_orders": _resting_payload(live_quotes),
+                            "scan": last_scan_summary(),
                         },
                     )
                 except Exception:
-                    logger.log("pnl_error", error="failed to persist pnl history", live=False, demo=True)
-            except DemoOrderError as exc:
-                logger.log("balance_error", error=str(exc), live=False)
+                    logger.log("demo_state_error", error="failed to persist live demo state", live=False, demo=True)
 
-            try:
-                _write_demo_state(
-                    config.logging.demo_state_path,
-                    {
-                        "source": client.source_name,
-                        "venue": "kalshi",
-                        "demo": True,
-                        "live": False,
-                        "running": True,
-                        "ts": datetime.now(timezone.utc).isoformat(),
-                        "tick": tick + 1,
-                        "ticks": n_ticks,
-                        "host": client.demo_base_url,
-                        "markets": list(watched),
-                        "quotes_placed": quotes_placed,
-                        "cancels": cancels,
-                        "fill_count": len(fill_snapshots),
-                        "fills": fill_snapshots[-50:],
-                        "positions": position_snapshots[-1] if position_snapshots else {},
-                        "starting_cash": cash,
-                        "ending_cash": port.cash,
-                        "maker": port.to_dict({s: watched[s].mid for s in watched} or {snap.slug: snap.mid}),
-                        "trading": last_trading,
-                        "account_risk": last_risk,
-                        "account_risk_cap": format_risk_pct(config.paper.risk.max_account_risk_pct),
-                        "market_risk_cap": format_score(config.paper.risk.max_market_risk_score),
-                        "market_risk": last_scores,
-                        "daily_limits": last_daily.as_dict() if last_daily else {},
-                        "daily_loss_limit_hit": bool(last_daily and last_daily.loss_halted),
-                        "strategy": favorites.STRATEGY if fav_mode else "two_sided_maker",
-                        "resting_orders": _resting_payload(live_quotes),
-                        "scan": last_scan_summary(),
-                    },
-                )
-            except Exception:
-                logger.log("demo_state_error", error="failed to persist live demo state", live=False, demo=True)
-
-            if tick < n_ticks - 1:
-                if sleep:
-                    time.sleep(config.paper.poll_interval_seconds)
-                    clock = datetime.now(timezone.utc)
-                else:
-                    clock = now_tick + timedelta(seconds=float(config.paper.poll_interval_seconds))
+                if tick < n_ticks - 1:
+                    if sleep:
+                        if _STOP.wait(timeout=float(config.paper.poll_interval_seconds)):
+                            stopped_by_signal = True
+                            logger.log("demo_stop", reason="signal", tick=tick, live=False, demo=True)
+                            break
+                        clock = datetime.now(timezone.utc)
+                    else:
+                        clock = now_tick + timedelta(seconds=float(config.paper.poll_interval_seconds))
+        except KeyboardInterrupt:
+            stopped_by_signal = True
+            request_demo_stop()
+            logger.log("demo_stop", reason="signal", live=False, demo=True)
     finally:
+        restore_demo_signal_handlers()
         lock.release()
         try:
             try:
@@ -1095,6 +1157,7 @@ def run_demo_session(
         "daily_loss_limit_hit": bool(last_daily and last_daily.loss_halted),
         "strategy": favorites.STRATEGY if favorites.is_favorites_mode(config) else "two_sided_maker",
         "scan": last_scan_summary(),
+        "stopped_by_signal": stopped_by_signal,
     }
     logger.log(
         "demo_end",

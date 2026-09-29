@@ -70,6 +70,10 @@ class _FavDemoFake:
             }
         }
         self.fail_series: set[str] = set()
+        self.pace_calls = 0
+
+    def pace_series_list(self) -> None:
+        self.pace_calls += 1
 
     def _assert_demo(self, confirm_demo: bool) -> None:
         if not confirm_demo:
@@ -313,3 +317,38 @@ def test_series_catalog_cached_and_coverage_logs_failures():
     summary = last_scan_summary()
     assert "series_attempted=" in summary
     assert "series_failed=" in summary
+    assert client.pace_calls >= 1
+
+
+def test_favorites_session_does_not_relog_existing_fill_ids(tmp_path):
+    cfg = _fav_cfg()
+    client = _FavDemoFake([_weather_row("KXRAIN-29SEP26-DEN")])
+    fill = {
+        "fill_id": "fill-dal-9",
+        "trade_id": "tr-dal-9",
+        "ticker": "KXRAIN-29SEP26-DEN",
+        "side": "ask",
+        "yes_price_dollars": "0.0900",
+        "count_fp": "1.00",
+        "created_time": "2026-09-29T12:00:00Z",
+    }
+    client.demo_fills = lambda **k: [fill]  # type: ignore[method-assign]
+    logger = DecisionLogger(tmp_path / "demo.jsonl")
+    try:
+        run_demo_session(
+            client,
+            cfg,
+            logger,
+            confirm_demo=True,
+            ticks=3,
+            ticker=None,
+            sleep=False,
+            now=NOW,
+        )
+    finally:
+        logger.close()
+    from polymarket_bot.favorites import favorites_settings, load_fill_rows
+
+    rows = load_fill_rows(favorites_settings(cfg).fills_path, dedupe=False)
+    assert len(rows) == 1
+    assert rows[0]["fill_id"] == "fill-dal-9"

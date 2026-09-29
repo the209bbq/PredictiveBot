@@ -101,6 +101,7 @@ def cmd_report(args: argparse.Namespace) -> int:
 def cmd_favorites_report(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     path = Path(args.fills) if args.fills else favorites.favorites_fills_path(config)
+    favorites.ensure_fill_log_deduped(path)
     rows = favorites.load_fill_rows(path)
     if args.reconcile:
         client = KalshiClient(config, public_only=True) if args.live_reconcile else None
@@ -212,6 +213,9 @@ def cmd_kalshi_demo_session(args: argparse.Namespace) -> int:
             ticker=args.ticker,
             sleep=not args.no_sleep,
         )
+    except KeyboardInterrupt:
+        print("Stopped by signal. Resting DEMO orders were cancelled.")
+        return 0
     finally:
         logger.close()
         client.close()
@@ -223,6 +227,9 @@ def cmd_kalshi_demo_session(args: argparse.Namespace) -> int:
     state_path.write_text(json.dumps(state, default=json_default, indent=2))
     print(report)
     print(f"Wrote {report_path} and {state_path}")
+    if state.get("stopped_by_signal"):
+        print("Stopped by SIGINT/SIGTERM; resting orders cancelled.")
+        return 0
     if state.get("resting_alert") or state.get("resting_leftover"):
         print(state.get("resting_alert") or "ALERT: resting Kalshi DEMO orders remain.", file=sys.stderr)
         return 2

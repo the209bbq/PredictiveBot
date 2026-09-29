@@ -156,7 +156,11 @@ class KalshiClient:
         self.data_base_url = (data_base_url or config.kalshi.market_data_base_url).rstrip("/")
         self.demo_base_url = config.kalshi.demo_base_url.rstrip("/")
         self._interval = config.kalshi.min_request_interval_seconds
+        self._series_interval = float(
+            getattr(config.kalshi, "series_list_interval_seconds", 0.35) or 0.0
+        )
         self._last = 0.0
+        self._last_series = 0.0
         self._http = httpx.Client(
             timeout=config.api.request_timeout_seconds,
             headers={"User-Agent": "PredictiveBot/0.2 (read-only)"},
@@ -170,6 +174,17 @@ class KalshiClient:
         if wait > 0:
             time.sleep(wait)
         self._last = time.monotonic()
+
+    def pace_series_list(self) -> None:
+        """Gap between per-series market list calls so a scan does not burst 429s."""
+        interval = float(self._series_interval or 0.0)
+        if interval <= 0:
+            return
+        now = time.monotonic()
+        wait = interval - (now - self._last_series)
+        if wait > 0:
+            time.sleep(wait)
+        self._last_series = time.monotonic()
 
     def _get(self, base: str, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         url = f"{base}{path}"
@@ -209,6 +224,8 @@ class KalshiClient:
         rows: list[dict[str, Any]] = []
         cursor: str | None = None
         pages = 0
+        if series_ticker:
+            self.pace_series_list()
         while len(rows) < offset + limit and pages < max_pages:
             params: dict[str, Any] = {
                 "limit": min(page_size, offset + limit - len(rows)),

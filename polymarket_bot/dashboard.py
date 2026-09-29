@@ -16,6 +16,7 @@ from urllib.parse import parse_qs, urlparse
 from polymarket_bot.config import AppConfig
 from polymarket_bot.demo.session import resolve_demo_state_path
 from polymarket_bot.logging_utils import json_default
+from polymarket_bot.market_data import as_decimal
 from polymarket_bot.pnl import env_name, history_path, load_history, snapshot_from_state, summarize
 from polymarket_bot.trading import set_trading_enabled, trading_status
 
@@ -139,7 +140,7 @@ async function load(){
   );
   el('positions', table((s.positions||[]).map(p=>[p.market, p.qty, p.avg_price]), ['market','qty','avg']));
   el('orders', table((s.resting_orders||[]).map(o=>[o.market||o.ticker, o.side, o.price, o.qty||o.count]), ['market','side','price','qty']));
-  el('fills', table((s.fills||[]).slice(0,20).map(f=>[f.market||f.ticker, f.side, f.price||f.yes_price_dollars, f.qty||f.count_fp||f.count, f.strategy||'', f.same_day?'same_day':'']), ['market','side','price','qty','strategy','same_day']));
+  el('fills', table((s.fills||[]).slice(0,20).map(f=>[f.market||f.ticker, f.side, f.price||f.yes_price_dollars, f.book_side||'', f.qty||f.count_fp||f.count, f.strategy||'', f.same_day?'same_day':(f.fill_tag||'')]), ['market','side','price','book','qty','strategy','tag']));
   el('markets', table((s.markets||[]).map(m=>{
     const why = Object.entries(m.components||{}).map(([k,v])=>k+'='+(Number(v)<=1?(Number(v)*100).toFixed(0)+'%':v)).join(', ');
     const over = m.over_threshold ? ' OVER' : '';
@@ -261,6 +262,7 @@ def _read_exchange(config: AppConfig, slugs: list[str]) -> dict[str, Any]:
 
 def _favorites_panel(config: AppConfig) -> dict[str, Any]:
     from polymarket_bot.favorites import (
+        ensure_fill_log_deduped,
         favorites_fills_path,
         favorites_settings,
         is_favorites_mode,
@@ -268,7 +270,9 @@ def _favorites_panel(config: AppConfig) -> dict[str, Any]:
         summarize_fills,
     )
 
-    rows = load_fill_rows(favorites_fills_path(config))
+    path = favorites_fills_path(config)
+    ensure_fill_log_deduped(path)
+    rows = load_fill_rows(path)
     summary = summarize_fills(rows)
     settings = favorites_settings(config)
     def _n(group: dict) -> dict[str, Any]:
@@ -300,6 +304,32 @@ def _normalize_fill(row: dict[str, Any]) -> dict[str, Any]:
     if qty is not None:
         out["qty"] = qty
     out["market"] = row.get("market") or row.get("ticker") or row.get("market_ticker")
+    raw_side = str(row.get("side") or row.get("action") or "yes").lower()
+    if raw_side in {"no", "ask", "sell", "short"}:
+        contract = "no"
+        book = "ask"
+    else:
+        contract = "yes"
+        book = "bid"
+    if row.get("book_side"):
+        book = str(row.get("book_side"))
+    yes_px = as_decimal(row.get("yes_price_dollars") or row.get("yes_price"))
+    no_px = as_decimal(row.get("no_price_dollars") or row.get("no_price"))
+    held = as_decimal(row.get("price"))
+    one = Decimal("1")
+    if contract == "no":
+        if no_px is not None:
+            held = no_px
+        elif yes_px is not None:
+            held = one - yes_px
+    elif yes_px is not None:
+        held = yes_px
+    if held is not None:
+        out["price"] = held
+    out["side"] = contract
+    out["book_side"] = book
+    if yes_px is not None:
+        out["yes_price"] = yes_px
     return out
 
 
@@ -353,7 +383,11 @@ def build_snapshot(
                         "avg_price": position_avg_price(row) or row.get("average_price") or row.get("avg_price"),
                     }
                 )
-    fills = [_normalize_fill(row) if isinstance(row, dict) else row for row in (maker.get("fills") or state.get("fills") or [])]
+    from polymarket_bot.favorites import dedupe_fill_rows
+
+    raw_fills = maker.get("fills") or state.get("fills") or []
+    raw_fills = [row for row in raw_fills if isinstance(row, dict)]
+    fills = [_normalize_fill(row) for row in dedupe_fill_rows(raw_fills)]
     scores = state.get("market_risk") or {}
     cap = _dec(config.paper.risk.max_market_risk_score)
     markets = []

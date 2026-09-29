@@ -507,3 +507,59 @@ def test_demo_state_written_each_tick(tmp_path):
     assert payload["demo"] is True
     assert payload["running"] is True
     assert payload["tick"] >= 1
+
+
+def test_demo_session_stops_on_signal_and_cancels(tmp_path):
+    from polymarket_bot.demo.session import request_demo_stop
+
+    cfg = load_config()
+    client = _DemoFake()
+    orig = client.place_demo_order
+
+    def place(**kwargs):
+        out = orig(**kwargs)
+        request_demo_stop()
+        return out
+
+    client.place_demo_order = place  # type: ignore[method-assign]
+    logger = DecisionLogger(tmp_path / "demo.jsonl")
+    now = datetime(2026, 9, 28, 22, 0, tzinfo=timezone.utc)
+    try:
+        state = run_demo_session(
+            client,
+            cfg,
+            logger,
+            confirm_demo=True,
+            ticks=8,
+            ticker="KXDEMO-COIN",
+            sleep=False,
+            now=now,
+        )
+    finally:
+        logger.close()
+    assert state["stopped_by_signal"] is True
+    assert state["quotes_placed"] >= 1
+    assert state["quotes_placed"] < 16
+    assert client.shutdowns == 1
+    assert "demo_stop" in (tmp_path / "demo.jsonl").read_text()
+
+
+def test_sigint_sets_stop_flag_without_traceback():
+    import os
+    import signal
+
+    from polymarket_bot.demo.session import (
+        demo_stop_requested,
+        install_demo_signal_handlers,
+        reset_demo_stop,
+        restore_demo_signal_handlers,
+    )
+
+    reset_demo_stop()
+    install_demo_signal_handlers()
+    try:
+        os.kill(os.getpid(), signal.SIGINT)
+        assert demo_stop_requested() is True
+    finally:
+        restore_demo_signal_handlers()
+        reset_demo_stop()

@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
+import json
 
 from polymarket_bot.config import load_config
 from polymarket_bot.dashboard import PAGE, build_snapshot
@@ -12,6 +13,7 @@ from polymarket_bot.favorites import (
     favorite_side,
     favorites_settings,
     favorites_universe_ok,
+    fill_row_from_exchange,
     fill_row_from_order,
     format_favorites_report,
     hard_excluded,
@@ -20,6 +22,8 @@ from polymarket_bot.favorites import (
     favorites_listed_ok,
     load_fill_rows,
     log_favorites_fill,
+    ensure_fill_log_deduped,
+    fill_key,
     reconcile_fills,
     summarize_fills,
     wilson_interval,
@@ -317,6 +321,49 @@ def test_fill_log_reconcile_and_report_math(tmp_path):
     csv_path = tmp_path / "fav.csv"
     write_csv(settled, csv_path)
     assert "ticker" in csv_path.read_text()
+
+
+def test_fill_id_dedupes_at_write_load_and_existing_file(tmp_path):
+    cfg = _fav_cfg()
+    snap = _weather()
+    payload = {
+        "fill_id": "fill-dal-1",
+        "trade_id": "tr-dal-1",
+        "order_id": "ord-1",
+        "ticker": "KXRAIN-26SEP29-DAL",
+        "side": "ask",
+        "yes_price_dollars": "0.0900",
+        "count_fp": "1.00",
+        "created_time": "2026-09-29T12:00:00Z",
+    }
+    row = fill_row_from_exchange(payload, snap=snap, settings=favorites_settings(cfg))
+    assert row["fill_id"] == "fill-dal-1"
+    assert row["side"] == "no"
+    assert Decimal(str(row["price"])) == Decimal("0.9100")
+    assert log_favorites_fill(cfg, row)
+    assert log_favorites_fill(cfg, row) is False
+    path = favorites_settings(cfg).fills_path
+    raw = path.read_text().splitlines()
+    assert len(raw) == 1
+    again = dict(row)
+    again["ts_placed"] = "2026-09-29T18:00:00Z"
+    assert log_favorites_fill(cfg, again) is False
+    # Legacy file: same fill three times, no fill_id.
+    legacy = tmp_path / "pmbot-state" / "legacy_fills.jsonl"
+    blob = {
+        "ticker": "KXRAIN-26SEP29-DAL",
+        "side": "no",
+        "price": "0.91",
+        "contracts": "1",
+        "order_id": "ord-legacy",
+        "ts_filled": "2026-09-29T12:00:00Z",
+        "ts_placed": "2026-09-29T12:00:00Z",
+    }
+    legacy.write_text("".join(json.dumps(blob) + "\n" for _ in range(3)))
+    n = ensure_fill_log_deduped(legacy)
+    assert n == 1
+    assert len(legacy.read_text().splitlines()) == 1
+    assert fill_key(blob).startswith("order:")
 
 
 def test_no_side_fill_uses_yes_tape_through():

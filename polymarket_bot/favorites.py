@@ -479,7 +479,7 @@ def append_fill_row(path: Path, row: dict[str, Any]) -> None:
         handle.write(json.dumps(row, default=json_default) + "\n")
 
 
-def load_fill_rows(path: Path) -> list[dict[str, Any]]:
+def load_fill_rows(path: Path, *, dedupe: bool = True) -> list[dict[str, Any]]:
     if not path.exists():
         return []
     out: list[dict[str, Any]] = []
@@ -492,7 +492,7 @@ def load_fill_rows(path: Path) -> list[dict[str, Any]]:
             continue
         if isinstance(row, dict):
             out.append(row)
-    return out
+    return dedupe_fill_rows(out) if dedupe else out
 
 
 def fill_row_from_order(
@@ -522,6 +522,8 @@ def fill_row_from_order(
         fill_tag=FILL_TAG,
         fills_path=Path("data/favorites_fills.jsonl"),
         allow=DEFAULT_ALLOW,
+        rescan_minutes=10.0,
+        max_markets=5,
     )
     side = order.contract_side or "yes"
     bid, ask = side_book(snap, side)
@@ -548,6 +550,9 @@ def fill_row_from_order(
         "pnl_after_fees": None,
         "fill_tag": order.fill_tag or settings.fill_tag,
         "strategy": STRATEGY,
+        "fill_id": f"paper:{order.order_id}:{filled_at.isoformat()}:{filled_qty}",
+        "trade_id": "",
+        "order_id": order.order_id,
     }
 
 
@@ -590,6 +595,9 @@ def fill_row_from_exchange(
         category = snap.category
         series = series_ticker(snap)
     tag = FILL_TAG if settings is None else settings.fill_tag
+    fill_id = exchange_fill_id(fill)
+    trade_id = str(fill.get("trade_id") or "")
+    order_id = str(fill.get("order_id") or "")
     return {
         "ticker": ticker,
         "series": series or str(fill.get("series_ticker") or ticker.split("-", 1)[0]),
@@ -612,30 +620,91 @@ def fill_row_from_exchange(
         "pnl_after_fees": None,
         "fill_tag": fill.get("fill_tag") or tag,
         "strategy": STRATEGY,
-        "order_id": str(fill.get("order_id") or fill.get("trade_id") or ""),
+        "fill_id": fill_id,
+        "trade_id": trade_id,
+        "order_id": order_id,
+        "book_side": "ask" if side == "no" else "bid",
+        "yes_price": str(yes_px) if yes_px is not None else None,
     }
 
 
+def exchange_fill_id(payload: dict[str, Any]) -> str:
+    """Kalshi fill/trade id from an exchange payload or a logged row."""
+    for key in ("fill_id", "trade_id", "id"):
+        val = payload.get(key)
+        if val not in (None, ""):
+            return str(val)
+    return ""
+
+
 def fill_key(row: dict[str, Any]) -> str:
+    """Stable identity: Kalshi fill/trade id, else order fingerprint, else row fields."""
+    fid = exchange_fill_id(row)
+    if fid:
+        return f"id:{fid}"
+    order_id = str(row.get("order_id") or "").strip()
+    ticker = str(row.get("ticker") or row.get("market") or row.get("market_ticker") or "")
+    side = str(row.get("side") or "")
+    price = str(row.get("price") or "")
+    contracts = str(row.get("contracts") or row.get("qty") or row.get("count") or "")
+    if order_id:
+        return f"order:{order_id}|{ticker}|{side}|{price}|{contracts}"
     return "|".join(
         [
-            str(row.get("order_id") or ""),
-            str(row.get("ticker") or ""),
+            ticker,
             str(row.get("ts_filled") or ""),
-            str(row.get("side") or ""),
-            str(row.get("price") or ""),
-            str(row.get("contracts") or ""),
+            side,
+            price,
+            contracts,
         ]
     )
 
 
+def _row_rank(row: dict[str, Any]) -> tuple[int, int, int]:
+    return (
+        1 if row.get("settled") else 0,
+        1 if row.get("mid_1m") not in (None, "") else 0,
+        1 if exchange_fill_id(row) else 0,
+    )
+
+
+def dedupe_fill_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep the first occurrence of each fill; prefer a later row if it has more data."""
+    by_key: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    for row in rows:
+        key = fill_key(row)
+        if key not in by_key:
+            by_key[key] = row
+            order.append(key)
+            continue
+        if _row_rank(row) > _row_rank(by_key[key]):
+            by_key[key] = row
+    return [by_key[k] for k in order]
+
+
+def ensure_fill_log_deduped(path: Path) -> int:
+    """One-off rewrite so an existing jsonl with repeated fills is unique."""
+    raw = load_fill_rows(path, dedupe=False)
+    unique = dedupe_fill_rows(raw)
+    if unique != raw:
+        rewrite_fills(path, unique)
+    return len(unique)
+
+
 def log_favorites_fill(config: AppConfig, row: dict[str, Any], seen: set[str] | None = None) -> bool:
     key = fill_key(row)
+    path = favorites_fills_path(config)
+    if seen is not None and key in seen:
+        return False
+    existing = {fill_key(r) for r in load_fill_rows(path, dedupe=False)}
+    if key in existing:
+        if seen is not None:
+            seen.add(key)
+        return False
     if seen is not None:
-        if key in seen:
-            return False
         seen.add(key)
-    append_fill_row(favorites_fills_path(config), row)
+    append_fill_row(path, row)
     return True
 
 
@@ -768,6 +837,9 @@ def write_csv(rows: list[dict[str, Any]], path: Path) -> Path:
         "outcome",
         "pnl_after_fees",
         "fill_tag",
+        "fill_id",
+        "trade_id",
+        "order_id",
     ]
     with path.open("w", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields, extrasaction="ignore")

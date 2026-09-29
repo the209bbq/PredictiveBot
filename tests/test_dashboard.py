@@ -100,7 +100,26 @@ def test_dashboard_demo_env_uses_demo_state_only(tmp_path):
     assert snap["fills"][0]["market"] == "KXDEMO-COIN"
     mapped = _normalize_fill({"ticker": "KXRT-FOO", "side": "yes", "count": 4, "yes_price_dollars": "0.40"})
     assert mapped["qty"] == Decimal("4")
-    assert "count_fp" in PAGE or "f.qty||f.count_fp||f.count" in PAGE
+    assert mapped["price"] == Decimal("0.40")
+    assert mapped["book_side"] == "bid"
+    no_fill = _normalize_fill(
+        {
+            "ticker": "KXRAIN-26SEP29-DAL",
+            "side": "no",
+            "yes_price_dollars": "0.0900",
+            "count_fp": "1.00",
+        }
+    )
+    assert no_fill["side"] == "no"
+    assert no_fill["price"] == Decimal("0.9100")
+    assert no_fill["book_side"] == "ask"
+    ask_fill = _normalize_fill(
+        {"ticker": "KXRAIN-26SEP29-DAL", "side": "ask", "yes_price_dollars": "0.0900", "count": 1}
+    )
+    assert ask_fill["side"] == "no"
+    assert ask_fill["price"] == Decimal("0.9100")
+    assert "f.qty||f.count_fp||f.count" in PAGE
+    assert "book_side" in PAGE
 
 
 def test_dashboard_follows_current_session_pointer(tmp_path):
@@ -254,3 +273,17 @@ def test_pnl_windows_are_deltas_and_live_file_is_separate(tmp_path):
     assert not history_path(base, "demo").exists() or history_path(base, "demo").read_text() == ""
     assert "live" in history_path(base, "live").name
     assert "demo" not in history_path(base, "live").name
+
+
+def test_history_path_does_not_double_env_suffix(tmp_path):
+    from pathlib import Path
+
+    base = Path("logs/pnl_history.jsonl")
+    demo = history_path(base, "demo")
+    assert demo.name == "pnl_history_demo.jsonl"
+    assert history_path(demo, "demo") == demo
+    already = tmp_path / "pnl_history_demo.jsonl"
+    assert history_path(already, "demo") == already
+    paper = history_path(base, "paper")
+    assert paper.name == "pnl_history_paper.jsonl"
+    assert history_path(paper, "paper") == paper

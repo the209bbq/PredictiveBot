@@ -149,6 +149,7 @@ class KalshiConfig:
     demo_base_url: str
     demo_orders_enabled: bool
     min_request_interval_seconds: float
+    series_list_interval_seconds: float
     tick_size: Decimal
 
 
@@ -355,6 +356,7 @@ def load_config(path: str | Path | None = None, environment: str | None = None) 
             ),
             demo_orders_enabled=bool(kalshi_raw.get("demo_orders_enabled", False)),
             min_request_interval_seconds=float(kalshi_raw.get("min_request_interval_seconds", 0.08)),
+            series_list_interval_seconds=float(kalshi_raw.get("series_list_interval_seconds", 0.35)),
             tick_size=_dec(kalshi_raw.get("tick_size"), "0.01"),
         ),
         scanner=ScannerConfig(

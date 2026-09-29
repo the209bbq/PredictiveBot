@@ -123,7 +123,13 @@ def _list_favorites_markets(client: MarketDataClient, config: AppConfig) -> list
 
     attempted = 0
     failed: list[str] = []
+    first_series = True
     for series in series_ids:
+        if not first_series:
+            pacer = getattr(client, "pace_series_list", None)
+            if callable(pacer):
+                pacer()
+        first_series = False
         attempted += 1
         try:
             batch = client.list_markets(

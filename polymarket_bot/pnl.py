@@ -29,12 +29,15 @@ def env_name(*, demo: bool, live: bool) -> str:
 
 
 def history_path(base: Path, env: str) -> Path:
-    """Keep demo and live/paper files strictly separate."""
-    if env == "demo":
-        return base.with_name(base.stem + "_demo" + base.suffix)
-    if env == "live":
-        return base.with_name(base.stem + "_live" + base.suffix)
-    return base.with_name(base.stem + "_paper" + base.suffix)
+    """Keep demo and live/paper files strictly separate.
+
+    Only append `_{env}` when the stem does not already end with that suffix,
+    so `pnl_history_demo.jsonl` is not rewritten as `pnl_history_demo_demo.jsonl`.
+    """
+    token = f"_{env}"
+    if base.stem.endswith(token):
+        return base
+    return base.with_name(base.stem + token + base.suffix)
 
 
 def _strategy_block(state: dict[str, Any], name: str) -> dict[str, Any]:

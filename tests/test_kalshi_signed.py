@@ -264,3 +264,20 @@ def test_get_retries_429_with_jittered_backoff(monkeypatch):
     assert out == {"series": []}
     assert len(sleeps) >= 2
     assert any(s > 0 for s in sleeps)
+
+
+def test_list_markets_paces_series_ticker_calls(monkeypatch):
+    sleeps: list[float] = []
+    monkeypatch.setattr(time, "sleep", lambda s: sleeps.append(s))
+    cfg = load_config()
+    client = KalshiClient(cfg)
+    client._interval = 0
+    client._series_interval = 0.35
+    client._last_series = 0.0
+    client._get = lambda *a, **k: {"markets": [{"ticker": "KXRAIN-X"}]}  # type: ignore[method-assign]
+    try:
+        client.list_markets(limit=1, series_ticker="KXRAIN")
+        client.list_markets(limit=1, series_ticker="KXHIGH")
+    finally:
+        client.close()
+    assert any(s >= 0.3 for s in sleeps)

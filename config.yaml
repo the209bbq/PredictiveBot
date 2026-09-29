@@ -33,6 +33,8 @@ kalshi:
   demo_orders_enabled: false
   # Basic tier: 200 read tokens/s, 10 tokens/GET => 20 GET/s. Stay below it.
   min_request_interval_seconds: 0.08
+  # Extra gap between GET /markets?series_ticker= so a scan does not burst into 429s.
+  series_list_interval_seconds: 0.35
   tick_size: 0.01
 
 scanner:
