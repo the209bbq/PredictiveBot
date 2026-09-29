@@ -82,6 +82,9 @@ def test_kxrt_skips_extremes_and_btc15m_denied():
         _kalshi("KXPAYROLLS-OCT", series="KXPAYROLLS", close="2026-11-06T12:30:00Z"), cfg
     )
     cfg.extra["paper"]["series"]["allow"].append("KXBTC")
+    cfg.extra["paper"]["series"]["disabled"] = [
+        x for x in (cfg.extra["paper"]["series"].get("disabled") or []) if str(x).upper() != "KXBTC"
+    ]
     assert maker_universe_ok(_kalshi("KXBTC-RANGE-50K", series="KXBTC"), cfg)
 
 
@@ -141,8 +144,12 @@ def test_gas_blackout_evening_daily_and_morning_weekly():
 
     # Off the allowlist by default. If re-enabled, evening still blocks daily quotes.
     assert not maker_universe_ok(daily, cfg, now=midday)
-    cfg.extra["paper"]["series"]["allow"].append("KXAAAGASD")
-    cfg.extra["paper"]["series"]["allow"].append("KXAAAGASW")
+    cfg.extra["paper"]["series"]["allow"].extend(["KXAAAGASD", "KXAAAGASW"])
+    cfg.extra["paper"]["series"]["disabled"] = [
+        x
+        for x in (cfg.extra["paper"]["series"].get("disabled") or [])
+        if not str(x).upper().startswith("KXAAA")
+    ]
     assert maker_universe_ok(daily, cfg, now=midday)
     assert not maker_universe_ok(daily, cfg, now=eve_mid)
     assert maker_universe_ok(weekly, cfg, now=eve_mid)

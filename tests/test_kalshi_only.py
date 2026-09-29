@@ -65,6 +65,24 @@ def test_no_forbidden_feeds_or_scrapers():
     disabled = [str(x).upper() for x in ((cfg.extra.get("paper") or {}).get("series") or {}).get("disabled") or []]
     assert "KXTRUTHSOCIAL" in disabled
     assert "KXTRUTHSOCIAL" not in [str(x).upper() for x in ((cfg.extra.get("paper") or {}).get("series") or {}).get("allow") or []]
+    from polymarket_bot.exchanges.kalshi import snapshot_from_kalshi
+    from polymarket_bot.series_filter import maker_universe_ok
+
+    truth = snapshot_from_kalshi(
+        {
+            "ticker": "KXTRUTHSOCIAL-X",
+            "series_ticker": "KXTRUTHSOCIAL",
+            "title": "Truth Social",
+            "status": "active",
+            "yes_bid_dollars": "0.49",
+            "yes_ask_dollars": "0.51",
+            "close_time": "2027-01-01T00:00:00Z",
+            "fee_type": "quadratic",
+        },
+        None,
+    )
+    cfg.extra["paper"]["series"]["allow"].append("KXTRUTHSOCIAL")
+    assert not maker_universe_ok(truth, cfg)
 
 
 def test_load_config_isolates_repo_state_dir(tmp_path, monkeypatch):

@@ -94,6 +94,28 @@ def _prefixes(config: AppConfig) -> tuple[list[str], list[str]]:
     return allow, deny
 
 
+def _disabled_list(config: AppConfig) -> list[str]:
+    extra = (config.extra.get("paper") or {}).get("series") or {}
+    if "disabled" in extra:
+        return [str(x).upper() for x in (extra.get("disabled") or [])]
+    return [str(x).upper() for x in DEFAULT_DISABLED]
+
+
+def _is_disabled(snap: MarketSnapshot, disabled: list[str]) -> bool:
+    series = series_ticker(snap)
+    slug = (snap.slug or "").upper()
+    return any(series.startswith(p) or slug.startswith(p) for p in disabled if p)
+
+
+def reducing_quote(side: str, qty) -> bool:
+    """True if this maker side reduces an existing position (unwind-only)."""
+    if qty > 0:
+        return side == "sell"
+    if qty < 0:
+        return side == "buy"
+    return False
+
+
 def _starts_with_any(text: str, prefixes: list[str] | tuple[str, ...]) -> bool:
     return any(text.startswith(p) or p in text for p in prefixes if p)
 
@@ -461,6 +483,8 @@ def listed_market_ok(
         return False
     if _is_denied(snap, deny):
         return False
+    if _is_disabled(snap, _disabled_list(config)):
+        return False
     if not _is_allowed(snap, allow):
         return False
     if event_blackout(snap, config, now or datetime.now(timezone.utc)):
@@ -484,6 +508,8 @@ def maker_universe_ok(
     if skip_fees and _has_maker_fees(snap):
         return False
     if _is_denied(snap, deny):
+        return False
+    if _is_disabled(snap, _disabled_list(config)):
         return False
     if not _is_allowed(snap, allow):
         return False

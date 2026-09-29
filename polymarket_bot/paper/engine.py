@@ -32,7 +32,13 @@ from polymarket_bot.paper.risk import (
 from polymarket_bot.daily_limits import refresh_daily_limits
 from polymarket_bot.kalshi_account import mark_price
 from polymarket_bot.scanner import scan_maker_universe, scan_near_resolution
-from polymarket_bot.series_filter import is_kxhigh_same_day, maker_min_hours, maker_universe_ok
+from polymarket_bot.series_filter import (
+    is_kxhigh_same_day,
+    maker_min_hours,
+    maker_universe_ok,
+    quote_mode,
+    reducing_quote,
+)
 from polymarket_bot.pnl import append_pnl
 from polymarket_bot.trading import TradingLock, trading_is_on
 
@@ -332,15 +338,28 @@ def _run_paper_locked(
                         live=False,
                     )
                     continue
-                if order.strategy == "maker" and not maker_universe_ok(snap, config, now=tick_now):
-                    logger.log(
-                        "cancel",
-                        strategy=order.strategy,
-                        market=order.market,
-                        reason="series_filter",
-                        live=False,
-                    )
-                    continue
+                if order.strategy == "maker":
+                    mode = quote_mode(snap, config, tick_now)
+                    if mode == "halt" or not maker_universe_ok(snap, config, now=tick_now):
+                        logger.log(
+                            "cancel",
+                            strategy=order.strategy,
+                            market=order.market,
+                            reason="series_filter",
+                            live=False,
+                        )
+                        continue
+                    if mode == "unwind" and not reducing_quote(
+                        order.side, port.position(order.market).qty
+                    ):
+                        logger.log(
+                            "cancel",
+                            strategy=order.strategy,
+                            market=order.market,
+                            reason="unwind_only",
+                            live=False,
+                        )
+                        continue
                 qty, reason = fill_qty(
                     order,
                     snap,
@@ -405,7 +424,8 @@ def _run_paper_locked(
                 quoted: set[str] = set()
                 for snap in universe:
                     tick_sz = snap.tick_size or config.paper.tick_size_fallback
-                    if not maker.should_requote(
+                    mode = quote_mode(snap, config, now_tick) if strategy == "maker" else "ok"
+                    if mode not in {"halt", "unwind"} and not maker.should_requote(
                         prev.get(snap.slug),
                         snap,
                         last_quote_at.get(f"{strategy}:{snap.slug}"),

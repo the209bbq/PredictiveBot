@@ -138,15 +138,16 @@ paper:
           date: "2026-10-04"
           all_day: true
     event_blackout_minutes: 30
+    # Naive timestamps are America/Los_Angeles (DST-aware via zoneinfo).
     events:
       - name: jobs
-        at: "2026-10-02T12:30:00+00:00"  # 5:30 AM PT
+        at: "2026-10-02T05:30:00"  # 5:30 AM PT
         series: [KXHIGH, KXRT, KXBRENTW, KXU3, KXPAYROLLS]
       - name: cpi
-        at: "2026-10-14T12:30:00+00:00"  # 5:30 AM PT
+        at: "2026-10-14T05:30:00"  # 5:30 AM PT
         series: [KXRT, KXBTC, KXETHD]
       - name: fomc
-        at: "2026-10-28T18:00:00+00:00"  # 11 AM PT
+        at: "2026-10-28T11:00:00"  # 11 AM PT
         series: [KXFED, KXFEDDECISION]
   near_resolution:
     enabled: true

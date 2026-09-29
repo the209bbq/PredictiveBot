@@ -457,6 +457,8 @@ def run_demo_session(
 
             skip_reason = None
             mode = quote_mode(snap, config, now_tick)
+            if mode == "unwind" and not requote:
+                requote = True
             if not trading_on:
                 skip_reason = "trading_off"
             elif snap.stale or not snap.book_fetched:
