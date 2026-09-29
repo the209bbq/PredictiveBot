@@ -104,10 +104,12 @@ paper:
       - KXRAIN
     skip_maker_fee_series: true
     # Gas stays off the allowlist. Windows apply if it is ever re-enabled.
-    # Daily (KXAAAGASD) closes 8:59 PM PT the night before; AAA prints ~4:06 AM PT.
-    aaa_evening_stop: "20:00"   # stop quoting daily gas from 8:00 PM PT until close
+    # Daily trading closes 8:59 PM PT the night before. AAA print/settlement is
+    # ~4:06 AM PT (outliers ~6:10 AM) — the risk is evening pre-close, not the print.
+    # Weekly KXAAAGASW settles Monday ~5:39–6:11 AM PT.
+    aaa_evening_stop: "20:00"   # daily only: 8:00 PM PT until close
     aaa_close: "20:59"
-    aaa_morning_blackout_start: "03:30"  # still-open daily + weekly KXAAAGASW
+    aaa_morning_blackout_start: "03:30"  # any AAA still open, including weekly
     aaa_morning_blackout_end: "07:00"
     # KXBRENTW: Pyth Index.BRENT/USD 24/7. Times are America/Los_Angeles.
     brent:

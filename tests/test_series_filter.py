@@ -10,6 +10,7 @@ from polymarket_bot.series_filter import (
     brent_unwind_only,
     gas_blackout,
     is_kxhigh_same_day,
+    listed_market_ok,
     maker_min_hours,
     maker_universe_ok,
     quote_mode,
@@ -107,15 +108,48 @@ def test_gas_blackout_evening_daily_and_morning_weekly():
     cfg = load_config()
     daily = _kalshi("KXAAAGASD-30SEP26", series="KXAAAGASD", close="2026-09-30T04:00:00Z")
     weekly = _kalshi("KXAAAGASW-05OCT26", series="KXAAAGASW", close="2026-10-05T13:00:00Z")
-    evening = datetime(2026, 9, 29, 3, 30, tzinfo=timezone.utc)  # 20:30 PT Sep 28
-    morning = datetime(2026, 9, 29, 12, 0, tzinfo=timezone.utc)  # 05:00 PT
+    # PDT (UTC-7). Evening risk is 8:00–8:59 PM PT daily only; weekly is morning-only.
+    before_eve = datetime(2026, 9, 29, 2, 59, tzinfo=timezone.utc)  # 19:59 PT
+    eve_open = datetime(2026, 9, 29, 3, 0, tzinfo=timezone.utc)  # 20:00 PT
+    eve_mid = datetime(2026, 9, 29, 3, 30, tzinfo=timezone.utc)  # 20:30 PT
+    eve_close = datetime(2026, 9, 29, 3, 59, tzinfo=timezone.utc)  # 20:59 PT
+    after_close = datetime(2026, 9, 29, 4, 1, tzinfo=timezone.utc)  # 21:01 PT
+    before_morn = datetime(2026, 9, 29, 10, 29, tzinfo=timezone.utc)  # 03:29 PT
+    morn_open = datetime(2026, 9, 29, 10, 30, tzinfo=timezone.utc)  # 03:30 PT
+    monday_print = datetime(2026, 10, 5, 12, 50, tzinfo=timezone.utc)  # 05:50 PT Monday
+    morn_end = datetime(2026, 9, 29, 14, 0, tzinfo=timezone.utc)  # 07:00 PT
+    after_morn = datetime(2026, 9, 29, 14, 1, tzinfo=timezone.utc)  # 07:01 PT
     midday = datetime(2026, 9, 29, 20, 0, tzinfo=timezone.utc)  # 13:00 PT
-    assert gas_blackout(daily, cfg, evening) is True
-    assert gas_blackout(weekly, cfg, evening) is False
-    assert gas_blackout(daily, cfg, morning) is True
-    assert gas_blackout(weekly, cfg, morning) is True
+
+    assert gas_blackout(daily, cfg, before_eve) is False
+    assert gas_blackout(daily, cfg, eve_open) is True
+    assert gas_blackout(daily, cfg, eve_mid) is True
+    assert gas_blackout(daily, cfg, eve_close) is True
+    assert gas_blackout(daily, cfg, after_close) is False
+    assert gas_blackout(weekly, cfg, eve_mid) is False
+    assert gas_blackout(daily, cfg, before_morn) is False
+    assert gas_blackout(weekly, cfg, before_morn) is False
+    assert gas_blackout(daily, cfg, morn_open) is True
+    assert gas_blackout(weekly, cfg, morn_open) is True
+    assert gas_blackout(weekly, cfg, monday_print) is True
+    assert gas_blackout(daily, cfg, morn_end) is True
+    assert gas_blackout(weekly, cfg, morn_end) is True
+    assert gas_blackout(daily, cfg, after_morn) is False
+    assert gas_blackout(weekly, cfg, after_morn) is False
     assert gas_blackout(daily, cfg, midday) is False
     assert gas_blackout(weekly, cfg, midday) is False
+
+    # Off the allowlist by default. If re-enabled, evening still blocks daily quotes.
+    assert not maker_universe_ok(daily, cfg, now=midday)
+    cfg.extra["paper"]["series"]["allow"].append("KXAAAGASD")
+    cfg.extra["paper"]["series"]["allow"].append("KXAAAGASW")
+    assert maker_universe_ok(daily, cfg, now=midday)
+    assert not maker_universe_ok(daily, cfg, now=eve_mid)
+    assert maker_universe_ok(weekly, cfg, now=eve_mid)
+    assert not maker_universe_ok(weekly, cfg, now=monday_print)
+    market = (daily.raw or {}).get("market") or {"ticker": daily.slug, "series_ticker": "KXAAAGASD"}
+    assert listed_market_ok(market, cfg, now=eve_mid) is False
+    assert listed_market_ok(market, cfg, now=midday) is True
 
 
 def test_kxhigh_same_day_fill_is_tagged():

@@ -166,7 +166,7 @@ The adapter and fee model remain in the tree. They are not run, fetched, or show
 - `paper.quote_size_contracts` — default `1`. Warns if set above `5`.
 - `paper.maker.improve_ticks` — ticks to improve inside a wide book; 1–2 tick books join the touch.
 - `paper.maker.requote_interval_seconds` — 10–60, default 30. Also re-quotes when the touch moves by `requote_on_touch_ticks`.
-- `paper.risk.maker_min_hours_to_resolution` — default `24`. Gas uses `maker_min_hours_overrides` + the AAA print blackout. `KXHIGH*` same-day quoting is **off** unless `paper.series.kxhigh_resolution_day_enabled: true` (never backtested; fills under it are tagged `same_day=true`).
+- `paper.risk.maker_min_hours_to_resolution` — default `24`. Gas (off the allowlist) uses `maker_min_hours_overrides` plus daily evening pre-close (8:00–8:59 PM PT) and a 3:30–7:00 AM PT halt for anything still open, including weekly. `KXHIGH*` same-day quoting is **off** unless `paper.series.kxhigh_resolution_day_enabled: true` (never backtested; fills under it are tagged `same_day=true`).
 - `paper.risk.max_daily_capital_in_use_usd` — default `100`. Open position cost + resting collateral. Enforced with the 40% account cap; tighter wins.
 - `paper.risk.max_daily_loss_usd` — default `50` (replaces `max_daily_loss: 25`). PT midnight–midnight via `America/Los_Angeles`. Halt uses marked equity (cash + positions), not cash only. Halt, cancel, ALERT, dashboard state; auto-resume next PT day.
 - `environments.demo` / `environments.live` — same `max_market_risk_score: 0.40` as paper. No 1.0 demo override.

@@ -410,7 +410,13 @@ def quote_mode(snap: MarketSnapshot, config: AppConfig, now: datetime) -> str:
 
 
 def gas_blackout(snap: MarketSnapshot, config: AppConfig, now: datetime) -> bool:
-    """AAA gasoline: evening pre-close on daily, morning window for anything still open."""
+    """AAA gasoline. Risk is late-evening pre-close, not the morning print.
+
+    Daily (KXAAAGASD) trading closes 8:59 PM PT the night before. Halt daily
+    quoting 8:00–8:59 PM PT. AAA prints ~4:06 AM PT (outliers to ~6:10 AM);
+    weekly KXAAAGASW settles Monday ~5:39–6:11 AM PT. Halt anything still
+    open 3:30–7:00 AM PT. Series stay off the allowlist unless re-enabled.
+    """
     series = series_ticker(snap)
     slug = (snap.slug or "").upper()
     if not (series.startswith("KXAAA") or slug.startswith("KXAAA")):
@@ -456,6 +462,8 @@ def listed_market_ok(
     if _is_denied(snap, deny):
         return False
     if not _is_allowed(snap, allow):
+        return False
+    if event_blackout(snap, config, now or datetime.now(timezone.utc)):
         return False
     return True
 
