@@ -246,7 +246,10 @@ def _components(
         jump = max(jump, _clamp01(abs(snap.last_trade - mid) / Decimal("0.15")))
 
     spread_c = _clamp01(spread / Decimal("0.10"))
-    thin = _clamp01(ONE - min(ONE, depth / Decimal("200")))
+    touch = Decimal("0")
+    if snap.bids and snap.asks:
+        touch = min(snap.bids[0].qty, snap.asks[0].qty)
+    thin = _clamp01(ONE - min(ONE, (depth + touch * 2) / Decimal("200")))
     if hours is None:
         urgency = Decimal("0.30")
     elif hours <= 1:

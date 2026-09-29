@@ -61,6 +61,49 @@ paper:
     inventory_skew_per_contract: 0.0004
     # Join the touch on 1–2 tick books; improve this many ticks when spread >= 3 ticks.
     improve_ticks: 1
+  series:
+    # Maker universe. Feeds the risk-score gate; does not replace it.
+    enabled: true
+    allow:
+      - KXHIGH
+      - KXTRUTHSOCIAL
+      - KXRT
+      - KXBTC
+      - KXETHD
+      - KXBRENTW
+      - KXAAAGASD
+      - KXAAAGASW
+      - KXDEMO
+    deny:
+      - KXNFL
+      - KXNBA
+      - KXMLB
+      - KXNHL
+      - KXFEDDECISION
+      - KXFED
+      - KXCPI
+      - KXWTI
+      - KXINXU
+      - KXBTC15M
+      - KXBTCD
+      - KXXRPD
+      - KXRAIN
+    skip_maker_fee_series: true
+    # AAA daily update time not confirmed — leave disabled until set (HH:MM PT).
+    aaa_blackout_enabled: false
+    aaa_blackout_start: null
+    aaa_blackout_minutes: 30
+    event_blackout_minutes: 30
+    events:
+      - name: jobs
+        at: "2026-10-02T12:30:00+00:00"  # 5:30 AM PT
+        series: [KXHIGH, KXRT, KXBTC, KXETHD, KXBRENTW]
+      - name: cpi
+        at: "2026-10-14T12:30:00+00:00"  # 5:30 AM PT
+        series: [KXRT, KXBTC, KXETHD]
+      - name: fomc
+        at: "2026-10-28T18:00:00+00:00"  # 11 AM PT
+        series: [KXFED, KXFEDDECISION]
   near_resolution:
     enabled: true
     min_price: 0.94

@@ -177,7 +177,8 @@ Demo market prices may not match production. Scanner/paper default to **producti
 - `paper.maker.improve_ticks` — ticks to improve inside a wide book; 1–2 tick books join the touch.
 - `compare.min_net_edge` — **dollars per contract** after taker fees. `compare.contract_size` is only the clip used to print dollar totals.
 - `paper.risk.max_market_risk_score` — per-market score gate (default `0.40`, hard max `0.50`). Override only with `allow_market_risk_above_hard_max: true`. Components: volatility, jump, spread, thin book, urgency, coin-flip (news), live-game/player-prop floor 1.00.
-- `dashboard.host` / `port` / `pnl_path` — local status page and JSONL P&L history (`logs/pnl_history_{paper,demo,live}.jsonl`).
+- `dashboard.host` / `port` / `pnl_path` — local status page and JSONL P&L history (`logs/pnl_history_{paper,demo,live}.jsonl`). Today / 7d / all-time are deltas; demo and live files never mix.
+- `paper.series` — maker allow/deny prefixes, event blackouts, skip maker-fee series. Feeds the risk-score gate; does not replace it.
 - `paper.risk.max_account_risk_pct` — secondary exposure cap (default `0.40`). Override the 40% hard max only with `allow_account_risk_above_hard_max: true`. Counts leftover account positions.
 - `paper.risk.maker_min_hours_to_resolution` — maker cutoff using the earliest of kickoff / expected expiration / close.
 - `trading.enabled` / `toggle_path` / `lock_path` — config master switch, CLI toggle file, and single-process lock.

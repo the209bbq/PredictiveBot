@@ -10,6 +10,7 @@ from polymarket_bot.market_data import MarketDataClient, MarketSnapshot
 from polymarket_bot.market_data.errors import BookFetchError
 from polymarket_bot.market_data.normalize import snapshot_from_payloads
 from polymarket_bot.market_risk import attach_market_risk, format_score
+from polymarket_bot.series_filter import touch_queue
 
 
 def _snapshot(client: MarketDataClient, market: dict, book, now, config: AppConfig) -> MarketSnapshot:
@@ -29,7 +30,7 @@ def liquidity_score(snap: MarketSnapshot) -> Decimal:
     oi = snap.open_interest or Decimal("0")
     liq = snap.notional_traded or Decimal("0")
     depth = (snap.bid_depth_contracts or Decimal("0")) + (snap.ask_depth_contracts or Decimal("0"))
-    return volume * Decimal("10") + oi + liq + depth
+    return volume * Decimal("10") + oi + liq + depth + touch_queue(snap) * Decimal("5")
 
 
 def is_liquid(snap: MarketSnapshot, cfg: ScannerConfig) -> bool:
