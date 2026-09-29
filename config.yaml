@@ -8,6 +8,8 @@ live_trading_enabled: false
 # repo but is not constructed, fetched, or shown unless this is true.
 exchange: kalshi
 polymarket_us_enabled: false
+# paper | demo | live. Demo overlay can raise max_market_risk_score to 1.0.
+environment: paper
 
 # Master switch. `pmbot trading off` pauses quoting without editing this file.
 trading:
@@ -51,9 +53,10 @@ scanner:
 
 paper:
   starting_cash: 1000.00
-  quote_size_contracts: 10
+  quote_size_contracts: 1
   max_markets: 5
   ticks: 6
+  # Poll for books/tape. Re-quotes use maker.requote_interval_seconds, not this.
   poll_interval_seconds: 2.0
   tick_size_fallback: 0.01
   maker:
@@ -63,19 +66,26 @@ paper:
     inventory_skew_per_contract: 0.0004
     # Join the touch on 1–2 tick books; improve this many ticks when spread >= 3 ticks.
     improve_ticks: 1
+    # Re-quote if the touch moves by this many ticks, or after this interval (10–60s).
+    requote_on_touch_ticks: 1
+    requote_interval_seconds: 30
   series:
     # Maker universe. Feeds the risk-score gate; does not replace it.
     enabled: true
     allow:
       - KXHIGH
-      - KXTRUTHSOCIAL
+      - KXBRENTW
       - KXRT
+      - KXU3
+      - KXPAYROLLS
+      - KXDEMO
+    # Configurable but off by default (crypto, gas, Truth Social).
+    disabled:
+      - KXTRUTHSOCIAL
       - KXBTC
       - KXETHD
-      - KXBRENTW
       - KXAAAGASD
       - KXAAAGASW
-      - KXDEMO
     deny:
       - KXNFL
       - KXNBA
@@ -99,7 +109,7 @@ paper:
     events:
       - name: jobs
         at: "2026-10-02T12:30:00+00:00"  # 5:30 AM PT
-        series: [KXHIGH, KXRT, KXBTC, KXETHD, KXBRENTW]
+        series: [KXHIGH, KXRT, KXBRENTW, KXU3, KXPAYROLLS]
       - name: cpi
         at: "2026-10-14T12:30:00+00:00"  # 5:30 AM PT
         series: [KXRT, KXBTC, KXETHD]
@@ -118,7 +128,12 @@ paper:
     max_gross_position: 120
     max_daily_loss: 25.00
     cancel_on_price_jump: 0.08
-    maker_min_hours_to_resolution: 6
+    maker_min_hours_to_resolution: 24
+    # KXHIGH quotes on the resolution day (series filter). Gas uses AAA print blackout.
+    maker_min_hours_overrides:
+      KXHIGH: 0
+      KXAAAGASD: 0
+      KXAAAGASW: 0
     # Worst-case $ at risk / account value. Secondary safeguard; default 40%.
     max_account_risk_pct: 0.40
     # Required to set max_account_risk_pct above 0.40.
@@ -153,3 +168,23 @@ dashboard:
   port: 8787
   refresh_seconds: 3
   pnl_path: logs/pnl_history.jsonl
+
+record:
+  interval_seconds: 5
+  book_levels: 5
+  format: jsonl
+  directory: data/recordings
+  rotate_mb: 64
+  max_files: 20
+
+environments:
+  demo:
+    paper:
+      risk:
+        max_market_risk_score: 1.0
+        allow_market_risk_above_hard_max: true
+  live:
+    paper:
+      risk:
+        max_market_risk_score: 0.40
+        allow_market_risk_above_hard_max: false

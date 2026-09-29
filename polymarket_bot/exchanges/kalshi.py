@@ -22,7 +22,7 @@ from polymarket_bot.guard import (
     is_kalshi_production_url,
     refuse_live_call,
 )
-from polymarket_bot.market_data import BookLevel, MarketSnapshot, as_datetime, as_decimal
+from polymarket_bot.market_data import BookLevel, MarketSnapshot, TapeTrade, as_datetime, as_decimal
 from polymarket_bot.market_data.errors import BookFetchError
 from polymarket_bot.market_data.normalize import depth_from_levels, hours_to_resolution
 
@@ -215,15 +215,57 @@ class KalshiClient:
         return self._get(self.data_base_url, f"/markets/{slug}/orderbook", {"depth": 10})
 
     def last_trade(self, slug: str) -> Decimal | None:
-        payload = self._get(
-            self.data_base_url,
-            "/markets/trades",
-            {"ticker": slug, "limit": 1, "is_block_trade": False},
-        )
-        trades = payload.get("trades") or []
-        if not trades:
-            return None
-        return as_decimal(trades[0].get("yes_price_dollars"))
+        tape = self.trades(slug, limit=1, max_pages=1)
+        return tape[-1].price if tape else None
+
+    def trades(
+        self,
+        slug: str,
+        *,
+        min_ts: int | float | None = None,
+        limit: int = 200,
+        max_pages: int = 5,
+    ) -> list[TapeTrade]:
+        """Full public tape since min_ts (unix seconds). Newest pages first, returned oldest-first."""
+        out: list[TapeTrade] = []
+        cursor: str | None = None
+        pages = 0
+        seen: set[str] = set()
+        while pages < max_pages and len(out) < limit:
+            params: dict[str, Any] = {
+                "ticker": slug,
+                "limit": min(1000, max(1, limit - len(out))),
+                "is_block_trade": False,
+            }
+            if min_ts is not None:
+                params["min_ts"] = int(min_ts)
+            if cursor:
+                params["cursor"] = cursor
+            payload = self._get(self.data_base_url, "/markets/trades", params)
+            pages += 1
+            rows = payload.get("trades") or []
+            for row in rows:
+                price = as_decimal(row.get("yes_price_dollars") or row.get("yes_price"))
+                if price is None:
+                    continue
+                qty = (
+                    as_decimal(row.get("count"))
+                    or as_decimal(row.get("contracts"))
+                    or as_decimal(row.get("quantity"))
+                    or Decimal("1")
+                )
+                ts = as_datetime(row.get("created_time") or row.get("ts"))
+                tid = row.get("trade_id") or row.get("id")
+                key = str(tid or f"{price}:{qty}:{ts}")
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append(TapeTrade(price=price, qty=qty, ts=ts, trade_id=str(tid) if tid else None))
+            cursor = payload.get("cursor") or None
+            if not rows or not cursor:
+                break
+        out.sort(key=lambda t: (t.ts or datetime.min.replace(tzinfo=timezone.utc), t.trade_id or ""))
+        return out
 
     def snapshot(
         self,

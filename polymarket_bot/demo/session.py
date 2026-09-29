@@ -40,6 +40,7 @@ from polymarket_bot.paper.risk import (
 )
 from polymarket_bot.pnl import append_pnl
 from polymarket_bot.scanner import scan_markets
+from polymarket_bot.series_filter import maker_min_hours
 from polymarket_bot.trading import TradingLock, TradingPaused, trading_is_on
 
 
@@ -303,6 +304,8 @@ def run_demo_session(
     last_trading = "on"
     history = PriceHistory()
     placed_this_tick: list[PaperOrder] = []
+    last_quote_at: datetime | None = None
+    prev_snap: MarketSnapshot | None = None
 
     logger.log(
         "demo_start",
@@ -337,23 +340,35 @@ def run_demo_session(
             )
             trading_on, trading_reason = trading_is_on(config)
             last_trading = "on" if trading_on else "off"
-            try:
-                canceller = getattr(client, "cancel_bot_demo_orders", None)
-                if callable(canceller):
-                    canceller(confirm_demo=True)
-                else:
-                    client.cancel_all_demo_orders(confirm_demo=True)
-                cancels += 1
-                logger.log(
-                    "cancel",
-                    reason="trading_off" if not trading_on else "requote",
-                    market=snap.slug,
-                    scoped=True,
-                    live=False,
-                    demo=True,
-                )
-            except DemoOrderError as exc:
-                logger.log("cancel_error", error=str(exc), market=snap.slug, live=False)
+            now_tick = datetime.now(timezone.utc)
+            tick_sz = snap.tick_size or config.paper.tick_size_fallback
+            requote = (not trading_on) or maker.should_requote(
+                prev_snap,
+                snap,
+                last_quote_at,
+                now_tick,
+                config.paper.maker.requote_interval_seconds,
+                tick_sz,
+                touch_ticks=config.paper.maker.requote_on_touch_ticks,
+            )
+            if requote:
+                try:
+                    canceller = getattr(client, "cancel_bot_demo_orders", None)
+                    if callable(canceller):
+                        canceller(confirm_demo=True)
+                    else:
+                        client.cancel_all_demo_orders(confirm_demo=True)
+                    cancels += 1
+                    logger.log(
+                        "cancel",
+                        reason="trading_off" if not trading_on else "requote",
+                        market=snap.slug,
+                        scoped=True,
+                        live=False,
+                        demo=True,
+                    )
+                except DemoOrderError as exc:
+                    logger.log("cancel_error", error=str(exc), market=snap.slug, live=False)
 
             try:
                 pos_payload = client.demo_positions(confirm_demo=True)
@@ -371,7 +386,7 @@ def run_demo_session(
                 skip_reason = "live_in_game"
             elif market_over_risk_threshold(snap, config.paper.risk.max_market_risk_score):
                 skip_reason = "market_risk_score"
-            elif past_resolution_cutoff(snap, config.paper.risk.maker_min_hours_to_resolution):
+            elif past_resolution_cutoff(snap, maker_min_hours(snap, config)):
                 skip_reason = "resolution_cutoff"
 
             placed_this_tick = []
@@ -384,7 +399,7 @@ def run_demo_session(
                     live=False,
                     demo=True,
                 )
-            else:
+            elif requote:
                 desired = maker.desired_quotes(snap, port, config, f"d{tick}")
                 for order in desired:
                     side = "bid" if order.side == "buy" else "ask"
@@ -437,7 +452,9 @@ def run_demo_session(
                         )
                     except DemoOrderError as exc:
                         logger.log("quote_error", error=str(exc), market=snap.slug, side=side, live=False)
+                last_quote_at = now_tick
 
+            prev_snap = snap
             try:
                 fills = client.demo_fills(confirm_demo=True)
                 fill_snapshots = fills

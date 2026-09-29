@@ -94,6 +94,29 @@ def test_default_market_score_cap():
     cfg = load_config()
     assert cfg.paper.risk.max_market_risk_score == DEFAULT_MARKET_RISK_SCORE
     assert cfg.paper.risk.allow_market_risk_above_hard_max is False
+    assert cfg.environment == "paper"
+
+
+def test_demo_environment_allows_full_risk_score():
+    cfg = load_config(environment="demo")
+    assert cfg.environment == "demo"
+    assert cfg.paper.risk.max_market_risk_score == Decimal("1.0")
+    assert cfg.paper.risk.allow_market_risk_above_hard_max is True
+    live = load_config(environment="live")
+    assert live.paper.risk.max_market_risk_score == DEFAULT_MARKET_RISK_SCORE
+    assert live.paper.risk.allow_market_risk_above_hard_max is False
+
+
+def test_quote_size_default_and_warn(tmp_path, caplog):
+    import logging
+
+    cfg = load_config()
+    assert cfg.paper.quote_size_contracts == Decimal("1")
+    caplog.set_level(logging.WARNING, logger="polymarket_bot")
+    path = tmp_path / "cfg.yaml"
+    path.write_text("dry_run: true\nlive_trading_enabled: false\npaper:\n  quote_size_contracts: 10\n")
+    load_config(path)
+    assert any("quote_size_contracts" in rec.message for rec in caplog.records)
 
 
 def test_live_nfl_game_scores_at_least_95():

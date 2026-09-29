@@ -120,7 +120,8 @@ def test_demo_session_quotes_requotes_and_verifies(tmp_path):
     assert state["demo"] is True
     assert state["live"] is False
     assert state["quotes_placed"] >= 2
-    assert client.cancelled_bot >= 2
+    # Same book and <30s: second tick does not cancel/replace.
+    assert client.cancelled_bot >= 1
     assert client.cancelled_all == 0
     assert client.shutdowns == 1
     assert client.shutdown_emergency is False

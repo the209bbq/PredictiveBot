@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from decimal import ROUND_HALF_EVEN, Decimal
 
 from polymarket_bot.config import AppConfig
@@ -9,7 +10,7 @@ from polymarket_bot.fees import MAX_PRICE, MIN_PRICE
 from polymarket_bot.market_data import MarketSnapshot
 from polymarket_bot.paper.portfolio import PaperOrder, Portfolio
 from polymarket_bot.market_risk import attach_market_risk, is_live_in_game, market_over_risk_threshold
-from polymarket_bot.series_filter import maker_universe_ok
+from polymarket_bot.series_filter import maker_min_hours, maker_universe_ok
 from polymarket_bot.paper.risk import (
     account_value_from_portfolio,
     past_resolution_cutoff,
@@ -52,7 +53,7 @@ def desired_quotes(
         return []
     if not maker_universe_ok(snap, config):
         return []
-    if past_resolution_cutoff(snap, config.paper.risk.maker_min_hours_to_resolution):
+    if past_resolution_cutoff(snap, maker_min_hours(snap, config)):
         return []
     if snap.risk_score is None:
         attach_market_risk(snap)
@@ -83,6 +84,13 @@ def desired_quotes(
 
     bid = clamp_price(raw_bid, tick)
     ask = clamp_price(raw_ask, tick)
+    # 1-tick books: skew can round the unwind side onto the opposite price
+    # and get dropped, leaving only the adding quote. Clamp unwind to the
+    # best price on its own side instead of dropping it.
+    if pos > 0 and (ask is None or ask <= snap.best_bid):
+        ask = snap.best_ask
+    if pos < 0 and (bid is None or bid >= snap.best_ask):
+        bid = snap.best_bid
     if bid is not None and ask is not None and bid >= ask:
         return []
 
@@ -95,6 +103,16 @@ def desired_quotes(
         if price is None:
             continue
         # Maker-only: never cross or lock the opposite side.
+        if side == "buy" and price >= snap.best_ask:
+            if pos < 0:
+                price = snap.best_bid
+            else:
+                continue
+        if side == "sell" and price <= snap.best_bid:
+            if pos > 0:
+                price = snap.best_ask
+            else:
+                continue
         if side == "buy" and price >= snap.best_ask:
             continue
         if side == "sell" and price <= snap.best_bid:
@@ -119,3 +137,28 @@ def desired_quotes(
         orders.append(candidate)
         booked.append(candidate)
     return orders
+
+
+def touch_moved(prev: MarketSnapshot | None, cur: MarketSnapshot, threshold: Decimal) -> bool:
+    if prev is None or cur.best_bid is None or cur.best_ask is None:
+        return True
+    if prev.best_bid is None or prev.best_ask is None:
+        return True
+    return abs(cur.best_bid - prev.best_bid) >= threshold or abs(cur.best_ask - prev.best_ask) >= threshold
+
+
+def should_requote(
+    prev: MarketSnapshot | None,
+    cur: MarketSnapshot,
+    last_quote_at: datetime | None,
+    now: datetime,
+    interval_seconds: float,
+    tick: Decimal,
+    *,
+    touch_ticks: int = 1,
+) -> bool:
+    if last_quote_at is None:
+        return True
+    if (now - last_quote_at).total_seconds() >= interval_seconds:
+        return True
+    return touch_moved(prev, cur, tick * Decimal(max(1, touch_ticks)))

@@ -40,12 +40,15 @@ def test_allow_demo_and_deny_sports():
     assert not maker_universe_ok(_kalshi("KXNFLYARDS-COOPER", series="KXNFLYARDS", title="Cooper receiving yards"), cfg)
 
 
-def test_kxhigh_next_day_only():
+def test_kxhigh_resolution_day_and_next_day():
     cfg = load_config()
-    same_day = _kalshi("KXHIGHNY-29SEP26", series="KXHIGHNY", close="2026-09-29T18:00:00Z")
+    late = _kalshi("KXHIGHNY-29SEP26", series="KXHIGHNY", close="2026-09-29T13:00:00Z")
+    morning = _kalshi("KXHIGHNY-29SEP26", series="KXHIGHNY", close="2026-09-29T18:00:00Z")
     nxt = _kalshi("KXHIGHNY-30SEP26", series="KXHIGHNY", close="2026-09-30T18:00:00Z")
-    assert same_day.hours_to_resolution is not None and same_day.hours_to_resolution < 12
-    assert not maker_universe_ok(same_day, cfg)
+    assert late.hours_to_resolution is not None and late.hours_to_resolution < 4
+    assert not maker_universe_ok(late, cfg)
+    assert morning.hours_to_resolution is not None and 4 <= morning.hours_to_resolution <= 12
+    assert maker_universe_ok(morning, cfg)
     assert nxt.hours_to_resolution is not None and 12 <= nxt.hours_to_resolution <= 40
     assert maker_universe_ok(nxt, cfg)
 
@@ -57,6 +60,13 @@ def test_kxrt_skips_extremes_and_btc15m_denied():
     assert not maker_universe_ok(extreme, cfg)
     assert maker_universe_ok(mid, cfg)
     assert not maker_universe_ok(_kalshi("KXBTC15M-A", series="KXBTC15M"), cfg)
+    assert not maker_universe_ok(_kalshi("KXBTC-RANGE-50K", series="KXBTC"), cfg)
+    assert maker_universe_ok(_kalshi("KXBRENTW-OCT", series="KXBRENTW"), cfg)
+    assert maker_universe_ok(_kalshi("KXU3-OCT", series="KXU3", close="2026-11-06T12:30:00Z"), cfg)
+    assert maker_universe_ok(
+        _kalshi("KXPAYROLLS-OCT", series="KXPAYROLLS", close="2026-11-06T12:30:00Z"), cfg
+    )
+    cfg.extra["paper"]["series"]["allow"].append("KXBTC")
     assert maker_universe_ok(_kalshi("KXBTC-RANGE-50K", series="KXBTC"), cfg)
 
 

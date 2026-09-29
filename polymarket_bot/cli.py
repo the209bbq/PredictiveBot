@@ -20,6 +20,7 @@ from polymarket_bot.live import start_live_trading
 from polymarket_bot.logging_utils import DecisionLogger, json_default
 from polymarket_bot.paper.engine import run_paper
 from polymarket_bot.paper.report import format_report
+from polymarket_bot.recorder import run_record
 from polymarket_bot.scanner import format_scan_table, scan_markets
 from polymarket_bot.trading import (
     TradingLock,
@@ -125,7 +126,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
 
 
 def cmd_kalshi_demo(args: argparse.Namespace) -> int:
-    config = load_config(args.config)
+    config = load_config(args.config, environment="demo")
     on, reason = trading_is_on(config)
     if not on:
         print(f"Trading is off ({reason}). Run: pmbot trading on", file=sys.stderr)
@@ -160,7 +161,7 @@ def cmd_kalshi_demo(args: argparse.Namespace) -> int:
 
 
 def cmd_kalshi_demo_session(args: argparse.Namespace) -> int:
-    config = load_config(args.config)
+    config = load_config(args.config, environment="demo")
     # Books and orders both hit the demo host so tickers exist there.
     client = KalshiClient(config, data_base_url=config.kalshi.demo_base_url)
     if getattr(args, "emergency_cancel_all", False):
@@ -233,6 +234,22 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
     object.__setattr__(config.dashboard, "host", host)
     object.__setattr__(config.dashboard, "port", port)
     serve_dashboard(config)
+    return 0
+
+
+def cmd_record(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    client = build_client(config, source=args.source, exchange="kalshi", fixture=args.fixture)
+    try:
+        path = run_record(
+            config,
+            client,
+            ticks=args.ticks,
+            sleep=not args.no_sleep,
+        )
+    finally:
+        client.close()
+    print(f"Wrote recording {path}")
     return 0
 
 
@@ -309,6 +326,13 @@ def build_parser() -> argparse.ArgumentParser:
     dash.add_argument("--host", default=None, help="Bind address (default 127.0.0.1)")
     dash.add_argument("--port", type=int, default=None, help="Port (default 8787)")
     dash.set_defaults(func=cmd_dashboard)
+
+    record = sub.add_parser("record", help="Read-only Kalshi book + tape recorder")
+    record.add_argument("--source", default="live", choices=["live", "fixture", "replay", "kalshi-demo-data"])
+    record.add_argument("--fixture", default=None)
+    record.add_argument("--ticks", type=int, default=1)
+    record.add_argument("--no-sleep", action="store_true")
+    record.set_defaults(func=cmd_record)
 
     live = sub.add_parser("live", help="Disabled. Always raises.")
     live.set_defaults(func=cmd_live)

@@ -139,6 +139,7 @@ class _RankClient:
 
 
 def test_sort_key_with_ticker_never_compares_dicts():
+    # Confirmed: ticker tie-break so equal score+spread never TypeError on dicts.
     from polymarket_bot.scanner import _market_ticker
 
     a = {

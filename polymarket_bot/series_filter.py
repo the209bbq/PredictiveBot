@@ -17,14 +17,18 @@ PT = ZoneInfo("America/Los_Angeles")
 
 DEFAULT_ALLOW = (
     "KXHIGH",
-    "KXTRUTHSOCIAL",
+    "KXBRENTW",
     "KXRT",
+    "KXU3",
+    "KXPAYROLLS",
+    "KXDEMO",
+)
+DEFAULT_DISABLED = (
+    "KXTRUTHSOCIAL",
     "KXBTC",
     "KXETHD",
-    "KXBRENTW",
     "KXAAAGASD",
     "KXAAAGASW",
-    "KXDEMO",
 )
 DEFAULT_DENY = (
     "KXNFL",
@@ -119,8 +123,20 @@ def _kxhigh_ok(snap: MarketSnapshot) -> bool:
     hours = snap.hours_to_resolution
     if hours is None:
         return False
-    # Next-day window only. Same-day HIGH moved tens of cents per hour.
-    return 12.0 <= hours <= 40.0
+    # Next-day plus late-morning on the resolution day. Skip late-day same-session.
+    return 4.0 <= hours <= 40.0
+
+
+def maker_min_hours(snap: MarketSnapshot, config: AppConfig) -> float:
+    """Per-series hours floor. Default 24h; KXHIGH/gas override to 0."""
+    series = series_ticker(snap)
+    slug = (snap.slug or "").upper()
+    overrides = dict(config.paper.risk.maker_min_hours_overrides or {})
+    for prefix, hours in sorted(overrides.items(), key=lambda kv: -len(str(kv[0]))):
+        token = str(prefix).upper()
+        if series.startswith(token) or slug.startswith(token):
+            return float(hours)
+    return float(config.paper.risk.maker_min_hours_to_resolution)
 
 
 def _kxrt_ok(snap: MarketSnapshot) -> bool:
@@ -144,7 +160,7 @@ def event_blackout(snap: MarketSnapshot, config: AppConfig, now: datetime) -> bo
     extra = (config.extra.get("paper") or {}).get("series") or {}
     minutes = int(extra.get("event_blackout_minutes", 30))
     events = extra.get("events") or [
-        {"name": "jobs", "at": "2026-10-02T12:30:00+00:00", "series": ["KXHIGH", "KXRT", "KXBTC", "KXETHD", "KXBRENTW"]},
+        {"name": "jobs", "at": "2026-10-02T12:30:00+00:00", "series": ["KXHIGH", "KXRT", "KXBRENTW", "KXU3", "KXPAYROLLS"]},
         {"name": "cpi", "at": "2026-10-14T12:30:00+00:00", "series": ["KXRT", "KXBTC", "KXETHD"]},
         {"name": "fomc", "at": "2026-10-28T18:00:00+00:00", "series": ["KXFED", "KXFEDDECISION"]},
     ]

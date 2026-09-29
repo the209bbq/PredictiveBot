@@ -12,9 +12,9 @@ This is a personal research tool, not financial advice. Prediction-market tradin
 
 1. **Read-only scanner** — pages through Kalshi `/markets`, ranks by volume / open interest / liquidity / book depth / touch-queue size, then fetches a small number of books. Reports mid, spread, **risk score**, depth, volume, hours to event. Hours use the earliest of `occurrence_datetime`, `expected_expiration_time`, and `close_time` (kickoff / event time, not a late official close). Trading hours come from `GET /exchange/schedule`.
 2. **Kalshi fee model** (fee schedule PDF + series `fee_type` on docs.kalshi.com): taker `round_up(M × 0.07 × C × P × (1−P))` to the next cent per order. Makers are free unless the series is `quadratic_with_maker_fees` (`0.0175`) or `quadratic_with_combo_maker_fees` (`0.035`). Series with maker fees are skipped by the maker allowlist by default.
-3. **Paper maker strategy** — spread-aware resting quotes: join the touch on a 1–2 tick book, improve by `improve_ticks` when the book is wider, inventory-skewed, never lock or cross (maker-only). Fills only on a strict trade-through or book cross-through. Kalshi last-trade is refreshed each live tick so trade-throughs can fire. Stale / unfetched books are not quoted or filled.
+3. **Paper maker strategy** — spread-aware resting quotes: join the touch on a 1–2 tick book, improve by `improve_ticks` when the book is wider, inventory-skewed, never lock or cross (maker-only). On 1-tick books the unwind side is clamped to the touch so skew cannot drop that quote. Fills consume the **full trade tape** since the last poll (partial size, back-of-queue). Re-quote only when the touch moves by a tick or after `requote_interval_seconds` (default 30s, 10–60). Default clip is **1 contract**. Stale / unfetched books are not quoted or filled.
 4. **Paper near-resolution favorites** — own universe selected by hours-to-event (not the far-dated maker scan). Resting bids on ~94–98¢ contracts. Isolated book and P&L.
-5. **Per-market RISK SCORE (primary)** — each market gets a 0–1 score (shown as 0–100%) from recent mid volatility, jump size, spread width, book thinness, time-to-event urgency, 50/50 proximity on news-driven events, and a **100% floor for live games and player props** on a started or same-day game (GAME / event / series tickers, vs/sports, in-progress phrases, kickoff `occurrence_datetime`, or receiving/yards-style props tied to a game). Computed every loop. The bot only quotes markets **strictly below** `max_market_risk_score` (default `0.40`; hard max `0.50` unless `allow_market_risk_above_hard_max: true`). When a score rises to the threshold, existing quotes are cancelled and no new ones are placed.
+5. **Per-market RISK SCORE (primary)** — each market gets a 0–1 score (shown as 0–100%) from recent mid volatility, jump size, spread width, book thinness, time-to-event urgency, 50/50 proximity on news-driven events, and a **100% floor for live games and player props** on a started or same-day game (GAME / event / series tickers, vs/sports, in-progress phrases, kickoff `occurrence_datetime`, or receiving/yards-style props tied to a game). Computed every loop. The bot only quotes markets **strictly below** `max_market_risk_score` (default `0.40`; hard max `0.50` unless `allow_market_risk_above_hard_max: true`). **Demo** (`PMBOT_ENV=demo` or `pmbot kalshi-demo`) may set the cap to `1.0`. When a score rises to the threshold, existing quotes are cancelled and no new ones are placed.
 6. **Account-exposure cap (secondary)** — never more than a configurable fraction of account value at risk (default 40%, adjustable; hard max 40% unless `allow_account_risk_above_hard_max: true`). At-risk is worst-case loss on **all existing account positions** (including leftovers from earlier sessions) plus every resting order if it filled (YES buy at `p` → `p` per contract; sell/NO → `1-p`). An order that would push the total over the cap is rejected. The current risk percentage is logged and printed on the session report. Per-market and gross caps, daily-loss kill switch, cancel on mid jump, and `maker_min_hours_to_resolution` still apply (hours include kickoff).
 7. **Trading toggle** — `pmbot trading off` / `on` / `status` writes a small state file (AND'd with `trading.enabled` in config). Checked every loop iteration. When off, the bot cancels **its own** resting orders, stops quoting, and keeps running read-only. Only one trading process may run at a time (PID/flock lock).
 8. **Kalshi demo session (opt-in)** — `pmbot kalshi-demo --confirm-demo` runs a quote / re-quote / cancel loop on the demo host, tracks balance / **all account positions** / fills, writes a session report with per-market risk scores, then cancels **only orders this bot placed** (`client_order_id` prefix `pmbot-` / tracked IDs) and verifies those are gone (loud alert if any remain). Account-wide `DELETE /portfolio/events/orders` is **emergency only**: `pmbot kalshi-demo --confirm-demo --emergency-cancel-all`. `pmbot kalshi-demo-order` still places a single demo order. Production URLs are refused. Signing auto-detects Ed25519 vs RSA.
@@ -72,6 +72,12 @@ Live public books, still **simulated** orders only:
 
 ```bash
 python -m polymarket_bot paper --exchange kalshi --source live --ticks 4 --no-sleep
+```
+
+Read-only book + tape recorder for the maker allowlist (compressed JSONL under `data/recordings/`):
+
+```bash
+python -m polymarket_bot record --ticks 3 --no-sleep
 ```
 
 `pmbot compare` and `--exchange polymarket_us` exit with an error unless you enable the leftover adapter in `config.yaml`.
@@ -156,11 +162,16 @@ The adapter and fee model remain in the tree. They are not run, fetched, or show
 - `exchange` / `polymarket_us_enabled` — Kalshi only unless the leftover adapter is explicitly turned on.
 - `scanner.list_page_size` / `max_list_pages` / `max_markets_to_list` — how far to page `/markets`.
 - `scanner.max_book_fetches` — books fetched after ranking.
+- `paper.quote_size_contracts` — default `1`. Warns if set above `5`.
 - `paper.maker.improve_ticks` — ticks to improve inside a wide book; 1–2 tick books join the touch.
+- `paper.maker.requote_interval_seconds` — 10–60, default 30. Also re-quotes when the touch moves by `requote_on_touch_ticks`.
+- `paper.risk.maker_min_hours_to_resolution` — default `24`. `maker_min_hours_overrides` lets `KXHIGH*` quote on the resolution day and gas use the AAA print blackout instead.
+- `environments.demo` — demo-only overlay; can set `max_market_risk_score: 1.0`.
+- `record.*` — `pmbot record` interval, top-of-book levels, jsonl/parquet, rotation.
 - `compare.enabled` — off. Cross-venue compare does not run unless this and `polymarket_us_enabled` are both true.
 - `paper.risk.max_market_risk_score` — per-market score gate (default `0.40`, hard max `0.50`). Override only with `allow_market_risk_above_hard_max: true`. Components: volatility, jump, spread, thin book, urgency, coin-flip (news), live-game/player-prop floor 1.00.
 - `dashboard.host` / `port` / `pnl_path` — local status page and JSONL P&L history (`logs/pnl_history_{paper,demo,live}.jsonl`). Today / 7d / all-time are deltas; demo and live files never mix.
-- `paper.series` — maker allow/deny prefixes, event blackouts, skip maker-fee series. Feeds the risk-score gate; does not replace it.
+- `paper.series` — maker allow/deny. Default allow: `KXHIGH*`, `KXBRENTW`, `KXRT`, `KXU3`/`KXPAYROLLS` (between releases). Crypto, gas, and Truth Social are configurable but off. Feeds the risk-score gate; does not replace it.
 - `paper.risk.max_account_risk_pct` — secondary exposure cap (default `0.40`). Override the 40% hard max only with `allow_account_risk_above_hard_max: true`. Counts leftover account positions.
 - `paper.risk.maker_min_hours_to_resolution` — maker cutoff using the earliest of kickoff / expected expiration / close.
 - `trading.enabled` / `toggle_path` / `lock_path` — config master switch, CLI toggle file, and single-process lock.

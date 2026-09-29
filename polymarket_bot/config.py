@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -53,12 +54,39 @@ class ScannerConfig:
     top_n: int
 
 
+QUOTE_SIZE_WARN = Decimal("5")
+DEFAULT_REQUOTE_INTERVAL = 30.0
+MIN_REQUOTE_INTERVAL = 10.0
+MAX_REQUOTE_INTERVAL = 60.0
+DEFAULT_HOURS_OVERRIDES = {
+    "KXHIGH": 0.0,
+    "KXAAAGASD": 0.0,
+    "KXAAAGASW": 0.0,
+}
+
+
+def clamp_requote_interval(seconds: float) -> float:
+    return min(MAX_REQUOTE_INTERVAL, max(MIN_REQUOTE_INTERVAL, float(seconds)))
+
+
+def merge_dict(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
+    out = dict(base)
+    for key, value in overlay.items():
+        if isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = merge_dict(out[key], value)
+        else:
+            out[key] = value
+    return out
+
+
 @dataclass(frozen=True)
 class MakerConfig:
     enabled: bool
     half_spread: Decimal
     inventory_skew_per_contract: Decimal
     improve_ticks: int
+    requote_interval_seconds: float
+    requote_on_touch_ticks: int
 
 
 @dataclass(frozen=True)
@@ -82,6 +110,7 @@ class RiskConfig:
     allow_account_risk_above_hard_max: bool
     max_market_risk_score: Decimal
     allow_market_risk_above_hard_max: bool
+    maker_min_hours_overrides: dict[str, float]
 
 
 @dataclass(frozen=True)
@@ -136,6 +165,16 @@ class DashboardConfig:
 
 
 @dataclass(frozen=True)
+class RecordConfig:
+    interval_seconds: float
+    book_levels: int
+    fmt: str
+    directory: Path
+    rotate_mb: float
+    max_files: int
+
+
+@dataclass(frozen=True)
 class CompareConfig:
     enabled: bool
     max_markets_each: int
@@ -158,6 +197,8 @@ class AppConfig:
     compare: CompareConfig
     trading: TradingConfig
     dashboard: DashboardConfig
+    record: RecordConfig
+    environment: str
     path: Path
     extra: dict[str, Any] = field(default_factory=dict)
 
@@ -169,10 +210,15 @@ def default_config_path() -> Path:
     return Path(__file__).resolve().parent.parent / "config.yaml"
 
 
-def load_config(path: str | Path | None = None) -> AppConfig:
+def load_config(path: str | Path | None = None, environment: str | None = None) -> AppConfig:
     load_dotenv()
     cfg_path = Path(path) if path else default_config_path()
     raw = yaml.safe_load(cfg_path.read_text()) or {}
+    env_name = str(environment or os.environ.get("PMBOT_ENV") or raw.get("environment") or "paper")
+    overlays = raw.get("environments") or {}
+    if env_name in overlays and isinstance(overlays[env_name], dict):
+        raw = merge_dict(raw, overlays[env_name])
+    raw["environment"] = env_name
 
     api_raw = raw.get("api") or {}
     scan_raw = raw.get("scanner") or {}
@@ -186,6 +232,7 @@ def load_config(path: str | Path | None = None) -> AppConfig:
     compare_raw = raw.get("compare") or {}
     trading_raw = raw.get("trading") or {}
     dash_raw = raw.get("dashboard") or {}
+    record_raw = raw.get("record") or {}
 
     risk_pct = _dec(risk_raw.get("max_account_risk_pct"), str(HARD_MAX_ACCOUNT_RISK_PCT))
     allow_above = bool(risk_raw.get("allow_account_risk_above_hard_max", False))
@@ -193,6 +240,19 @@ def load_config(path: str | Path | None = None) -> AppConfig:
     market_score = _dec(risk_raw.get("max_market_risk_score"), str(DEFAULT_MARKET_RISK_SCORE))
     allow_market_above = bool(risk_raw.get("allow_market_risk_above_hard_max", False))
     validate_market_risk_score(market_score, allow_above_hard_max=allow_market_above)
+
+    hours_overrides = dict(DEFAULT_HOURS_OVERRIDES)
+    raw_overrides = risk_raw.get("maker_min_hours_overrides") or {}
+    if isinstance(raw_overrides, dict):
+        hours_overrides.update({str(k).upper(): float(v) for k, v in raw_overrides.items()})
+
+    quote_size = _dec(paper_raw.get("quote_size_contracts"), "1")
+    if quote_size > QUOTE_SIZE_WARN:
+        logging.getLogger("polymarket_bot").warning(
+            "quote_size_contracts=%s is above %s; backtests used size 1",
+            quote_size,
+            QUOTE_SIZE_WARN,
+        )
 
     config = AppConfig(
         dry_run=bool(raw.get("dry_run", True)),
@@ -233,7 +293,7 @@ def load_config(path: str | Path | None = None) -> AppConfig:
         ),
         paper=PaperConfig(
             starting_cash=_dec(paper_raw.get("starting_cash"), "1000"),
-            quote_size_contracts=_dec(paper_raw.get("quote_size_contracts"), "10"),
+            quote_size_contracts=quote_size,
             max_markets=int(paper_raw.get("max_markets", 5)),
             ticks=int(paper_raw.get("ticks", 6)),
             poll_interval_seconds=float(paper_raw.get("poll_interval_seconds", 2.0)),
@@ -243,6 +303,10 @@ def load_config(path: str | Path | None = None) -> AppConfig:
                 half_spread=_dec(maker_raw.get("half_spread"), "0.02"),
                 inventory_skew_per_contract=_dec(maker_raw.get("inventory_skew_per_contract"), "0.0004"),
                 improve_ticks=int(maker_raw.get("improve_ticks", 1)),
+                requote_interval_seconds=clamp_requote_interval(
+                    float(maker_raw.get("requote_interval_seconds", DEFAULT_REQUOTE_INTERVAL))
+                ),
+                requote_on_touch_ticks=int(maker_raw.get("requote_on_touch_ticks", 1)),
             ),
             near_resolution=NearResolutionConfig(
                 enabled=bool(near_raw.get("enabled", True)),
@@ -257,11 +321,12 @@ def load_config(path: str | Path | None = None) -> AppConfig:
                 max_gross_position=_dec(risk_raw.get("max_gross_position"), "120"),
                 max_daily_loss=_dec(risk_raw.get("max_daily_loss"), "25"),
                 cancel_on_price_jump=_dec(risk_raw.get("cancel_on_price_jump"), "0.08"),
-                maker_min_hours_to_resolution=float(risk_raw.get("maker_min_hours_to_resolution", 6)),
+                maker_min_hours_to_resolution=float(risk_raw.get("maker_min_hours_to_resolution", 24)),
                 max_account_risk_pct=risk_pct,
                 allow_account_risk_above_hard_max=allow_above,
                 max_market_risk_score=market_score,
                 allow_market_risk_above_hard_max=allow_market_above,
+                maker_min_hours_overrides=hours_overrides,
             ),
             fills=FillConfig(
                 require_strict_trade_through=bool(fills_raw.get("require_strict_trade_through", True)),
@@ -291,6 +356,15 @@ def load_config(path: str | Path | None = None) -> AppConfig:
             refresh_seconds=float(dash_raw.get("refresh_seconds", 3)),
             pnl_path=Path(dash_raw.get("pnl_path", "logs/pnl_history.jsonl")),
         ),
+        record=RecordConfig(
+            interval_seconds=float(record_raw.get("interval_seconds", 5)),
+            book_levels=int(record_raw.get("book_levels", 5)),
+            fmt=str(record_raw.get("format", "jsonl")).lower(),
+            directory=Path(record_raw.get("directory", "data/recordings")),
+            rotate_mb=float(record_raw.get("rotate_mb", 64)),
+            max_files=int(record_raw.get("max_files", 20)),
+        ),
+        environment=env_name,
         path=cfg_path,
         extra=raw,
     )

@@ -15,6 +15,7 @@ build/
 htmlcov/
 logs/
 state/
+data/recordings/
 *.log
 .DS_Store
 .idea/

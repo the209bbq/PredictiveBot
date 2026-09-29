@@ -49,6 +49,14 @@ class BookLevel:
     qty: Decimal
 
 
+@dataclass(frozen=True)
+class TapeTrade:
+    price: Decimal
+    qty: Decimal
+    ts: datetime | None = None
+    trade_id: str | None = None
+
+
 @dataclass
 class MarketSnapshot:
     slug: str
@@ -80,6 +88,7 @@ class MarketSnapshot:
     book_fetched: bool = False
     risk_score: Decimal | None = None
     risk_components: dict[str, Decimal] = field(default_factory=dict)
+    tape: list[TapeTrade] = field(default_factory=list)
 
     @property
     def liquid(self) -> bool:

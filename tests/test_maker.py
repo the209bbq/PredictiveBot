@@ -2,9 +2,9 @@ from decimal import Decimal
 
 from polymarket_bot.config import load_config
 from polymarket_bot.market_data import MarketSnapshot
-from polymarket_bot.paper.maker import desired_quotes
+from polymarket_bot.paper.maker import desired_quotes, should_requote
 from polymarket_bot.paper.near_resolution import desired_quotes as near_quotes
-from polymarket_bot.paper.portfolio import Portfolio
+from polymarket_bot.paper.portfolio import PaperOrder, Portfolio
 
 
 def _snap(
@@ -86,7 +86,7 @@ def test_account_risk_cap_blocks_quote():
     )
     port = Portfolio("maker", Decimal("10"), Decimal("10"))
     quotes = desired_quotes(_snap(bid="0.50", ask="0.51", tick="0.01"), port, cfg, "t0")
-    # 10 contracts * 0.50 = $5 on $10 equity = 50% > 1%
+    # 1 contract * 0.50 = $0.50 on $10 equity = 5% > 1%
     assert quotes == []
 
 
@@ -108,3 +108,35 @@ def test_live_game_and_high_score_not_quoted():
     assert desired_quotes(risky, port, cfg, "t0") == []
     cutoff = _snap(hours=5)
     assert desired_quotes(cutoff, port, cfg, "t0") == []
+    assert desired_quotes(_snap(hours=12), port, cfg, "t0") == []
+    assert desired_quotes(_snap(hours=48), port, cfg, "t0")
+
+
+def test_inventory_skew_clamps_unwind_on_one_tick_book():
+    cfg = load_config()
+    port = Portfolio("maker", Decimal("1000"), Decimal("1000"))
+    port.apply_fill(
+        PaperOrder("seed", "m", "buy", Decimal("0.50"), Decimal("20"), "maker"),
+        Decimal("20"),
+        "trade_through",
+    )
+    quotes = desired_quotes(_snap(bid="0.50", ask="0.51", tick="0.01"), port, cfg, "t0")
+    prices = {q.side: q.price for q in quotes}
+    assert "buy" in prices and "sell" in prices
+    assert prices["sell"] == Decimal("0.51")
+    assert prices["buy"] < Decimal("0.50")
+
+
+def test_requote_only_on_touch_move_or_interval():
+    from datetime import datetime, timezone
+
+    prev = _snap(bid="0.50", ask="0.51")
+    same = _snap(bid="0.50", ask="0.51")
+    moved = _snap(bid="0.49", ask="0.50")
+    t0 = datetime(2026, 9, 29, 12, 0, tzinfo=timezone.utc)
+    t15 = datetime(2026, 9, 29, 12, 0, 15, tzinfo=timezone.utc)
+    t45 = datetime(2026, 9, 29, 12, 0, 45, tzinfo=timezone.utc)
+    tick = Decimal("0.01")
+    assert should_requote(prev, same, t0, t15, 30, tick) is False
+    assert should_requote(prev, moved, t0, t15, 30, tick) is True
+    assert should_requote(prev, same, t0, t45, 30, tick) is True

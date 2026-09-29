@@ -1,7 +1,7 @@
 from decimal import Decimal
 
-from polymarket_bot.market_data import MarketSnapshot
-from polymarket_bot.paper.fills import fill_reason
+from polymarket_bot.market_data import BookLevel, MarketSnapshot, TapeTrade
+from polymarket_bot.paper.fills import fill_qty, fill_reason
 from polymarket_bot.paper.portfolio import PaperOrder
 
 
@@ -85,3 +85,25 @@ def test_stale_snapshot_never_fills():
     cur = _snap("0.47", "0.46", "0.50")
     cur.stale = True
     assert fill_reason(_bid(), cur, prev) is None
+
+
+def test_tape_uses_partial_size_and_queue_ahead():
+    prev = _snap("0.50", "0.49", "0.51")
+    cur = _snap("0.47", "0.49", "0.51")
+    cur.bids = [BookLevel(Decimal("0.49"), Decimal("50"))]
+    cur.tape = [
+        TapeTrade(price=Decimal("0.47"), qty=Decimal("2")),
+        TapeTrade(price=Decimal("0.48"), qty=Decimal("1")),
+        TapeTrade(price=Decimal("0.49"), qty=Decimal("10")),
+    ]
+    qty, reason = fill_qty(_bid("0.49"), cur, prev)
+    assert reason == "trade_through"
+    assert qty == Decimal("3")
+
+
+def test_single_last_trade_fills_one_contract_not_full_size():
+    prev = _snap("0.50", "0.49", "0.51")
+    cur = _snap("0.47", "0.46", "0.50")
+    qty, reason = fill_qty(_bid("0.48"), cur, prev)
+    assert reason == "trade_through"
+    assert qty == Decimal("1")

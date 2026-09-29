@@ -13,7 +13,7 @@ from polymarket_bot.market_data import MarketDataClient, MarketSnapshot
 from polymarket_bot.market_data.errors import BookFetchError
 from polymarket_bot.market_data.replay_client import ReplayClient
 from polymarket_bot.paper import maker, near_resolution
-from polymarket_bot.paper.fills import fill_reason
+from polymarket_bot.paper.fills import fill_qty, synthesize_tape
 from polymarket_bot.paper.portfolio import PaperOrder, Portfolio
 from polymarket_bot.market_risk import (
     PriceHistory,
@@ -31,7 +31,7 @@ from polymarket_bot.paper.risk import (
     snapshot_account_risk,
 )
 from polymarket_bot.scanner import scan_markets, scan_near_resolution
-from polymarket_bot.series_filter import maker_universe_ok
+from polymarket_bot.series_filter import maker_min_hours, maker_universe_ok
 from polymarket_bot.pnl import append_pnl
 from polymarket_bot.trading import TradingLock, trading_is_on
 
@@ -52,13 +52,46 @@ def _mark_stale(snap: MarketSnapshot) -> MarketSnapshot:
     return snap
 
 
+def _unix(ts: datetime | None) -> int | None:
+    if ts is None:
+        return None
+    return int(ts.timestamp())
+
+
+def _attach_tape(
+    client: MarketDataClient,
+    snap: MarketSnapshot,
+    logger: DecisionLogger,
+    since: datetime | None,
+) -> MarketSnapshot:
+    getter = getattr(client, "trades", None)
+    if callable(getter):
+        try:
+            snap.tape = getter(snap.slug, min_ts=_unix(since) if since else None)
+            if snap.tape:
+                snap.last_trade = snap.tape[-1].price
+            return snap
+        except (BookFetchError, Exception, TypeError) as exc:
+            logger.log("tape_error", market=snap.slug, error=str(exc), live=False)
+    last_fn = getattr(client, "last_trade", None)
+    if callable(last_fn):
+        try:
+            last = last_fn(snap.slug)
+            if last is not None:
+                snap.last_trade = last
+        except (BookFetchError, Exception) as exc:
+            logger.log("last_trade_error", market=snap.slug, error=str(exc), live=False)
+    return snap
+
+
 def _refresh_live(
     client: MarketDataClient,
     snap: MarketSnapshot,
     logger: DecisionLogger,
     now: datetime,
+    since: datetime | None = None,
 ) -> MarketSnapshot:
-    """Fetch a fresh book (and last trade). Never reuse a failed book as live data."""
+    """Fetch a fresh book and the trade tape since the last poll."""
     try:
         book = client.book(snap.slug)
     except (BookFetchError, Exception) as exc:
@@ -71,14 +104,7 @@ def _refresh_live(
         "question": snap.question,
     }
     refreshed = client.snapshot(market, book, now=now)
-    getter = getattr(client, "last_trade", None)
-    if callable(getter):
-        try:
-            last = getter(snap.slug)
-            if last is not None:
-                refreshed.last_trade = last
-        except (BookFetchError, Exception) as exc:
-            logger.log("last_trade_error", market=snap.slug, error=str(exc), live=False)
+    refreshed = _attach_tape(client, refreshed, logger, since)
     refreshed.stale = False
     refreshed.book_fetched = True
     return refreshed
@@ -157,6 +183,8 @@ def _run_paper_locked(
     prev: dict[str, MarketSnapshot] = {}
     last_risk: dict[str, dict[str, Any]] = {}
     last_scores: dict[str, dict[str, Any]] = {}
+    last_quote_at: dict[str, datetime] = {}
+    last_tape_at: dict[str, datetime] = {}
     history = PriceHistory()
     logger.log(
         "paper_start",
@@ -183,11 +211,24 @@ def _run_paper_locked(
                 universe.append(snap)
         else:
             universe = [
-                _refresh_live(client, snap, logger, datetime.now(timezone.utc)) for snap in chosen
+                _refresh_live(
+                    client,
+                    snap,
+                    logger,
+                    datetime.now(timezone.utc),
+                    since=last_tape_at.get(snap.slug),
+                )
+                for snap in chosen
             ]
             chosen = universe
 
         for snap in universe:
+            if not snap.tape:
+                snap.tape = synthesize_tape(snap, prev.get(snap.slug))
+            if snap.tape and snap.tape[-1].ts:
+                last_tape_at[snap.slug] = snap.tape[-1].ts
+            else:
+                last_tape_at[snap.slug] = datetime.now(timezone.utc)
             attach_market_risk(snap, history)
             snaps[snap.slug] = snap
             last_scores[snap.slug] = score_payload(snap)
@@ -251,7 +292,7 @@ def _run_paper_locked(
                     )
                     continue
                 min_hours = (
-                    config.paper.risk.maker_min_hours_to_resolution
+                    maker_min_hours(snap, config)
                     if order.strategy == "maker"
                     else config.paper.near_resolution.min_hours_to_resolution
                 )
@@ -264,25 +305,40 @@ def _run_paper_locked(
                         live=False,
                     )
                     continue
-                reason = fill_reason(
+                qty, reason = fill_qty(
                     order,
                     snap,
                     prev.get(order.market),
                     strict=config.paper.fills.require_strict_trade_through,
                 )
-                if reason:
-                    fill = port.apply_fill(order, order.qty, reason)
+                if reason and qty > 0:
+                    fill = port.apply_fill(order, qty, reason)
                     logger.log(
                         "fill",
                         strategy=order.strategy,
                         market=order.market,
                         side=order.side,
                         price=order.price,
-                        qty=order.qty,
+                        qty=qty,
                         rebate=fill.rebate,
                         reason=reason,
                         live=False,
                     )
+                    leftover = order.qty - qty
+                    if leftover > 0:
+                        remaining.append(
+                            PaperOrder(
+                                order_id=order.order_id,
+                                market=order.market,
+                                side=order.side,
+                                price=order.price,
+                                qty=leftover,
+                                strategy=order.strategy,
+                                venue=order.venue,
+                                fee_type=order.fee_type,
+                                fee_multiplier=order.fee_multiplier,
+                            )
+                        )
                     continue
                 remaining.append(order)
             return remaining
@@ -296,41 +352,62 @@ def _run_paper_locked(
             maker_book = process_book(maker_book, maker_port)
             near_book = process_book(near_book, near_port)
 
-            # Replace quotes each tick (simulated cancel/replace, never sent live).
-            maker_book = _cancel_all(maker_book, logger, "requote", "maker") if maker_book else []
-            near_book = _cancel_all(near_book, logger, "requote", "near_resolution") if near_book else []
-
+            now_tick = datetime.now(timezone.utc)
+            interval = config.paper.maker.requote_interval_seconds
+            touch_ticks = config.paper.maker.requote_on_touch_ticks
             prefix = f"t{tick}"
-            if not maker_port.killed:
+
+            def _replace(book: list[PaperOrder], port: Portfolio, strategy: str) -> list[PaperOrder]:
+                if port.killed:
+                    return []
+                kept: list[PaperOrder] = []
+                quoted: set[str] = set()
                 for snap in universe:
-                    quotes = maker.desired_quotes(snap, maker_port, config, prefix, resting=maker_book)
+                    tick_sz = snap.tick_size or config.paper.tick_size_fallback
+                    if not maker.should_requote(
+                        prev.get(snap.slug),
+                        snap,
+                        last_quote_at.get(f"{strategy}:{snap.slug}"),
+                        now_tick,
+                        interval,
+                        tick_sz,
+                        touch_ticks=touch_ticks,
+                    ):
+                        kept.extend([o for o in book if o.market == snap.slug])
+                        continue
+                    for order in book:
+                        if order.market == snap.slug:
+                            logger.log(
+                                "cancel",
+                                strategy=strategy,
+                                market=order.market,
+                                side=order.side,
+                                reason="requote",
+                                live=False,
+                            )
+                    if strategy == "maker":
+                        quotes = maker.desired_quotes(snap, port, config, prefix, resting=kept)
+                    else:
+                        quotes = near_resolution.desired_quotes(
+                            snap, port, config, prefix, resting=kept
+                        )
                     for order in quotes:
-                        maker_book.append(order)
+                        kept.append(order)
+                        quoted.add(snap.slug)
                         logger.log(
                             "quote",
-                            strategy="maker",
+                            strategy=strategy,
                             market=order.market,
                             side=order.side,
                             price=order.price,
                             qty=order.qty,
                             live=False,
                         )
-            if not near_port.killed:
-                for snap in universe:
-                    quotes = near_resolution.desired_quotes(
-                        snap, near_port, config, prefix, resting=near_book
-                    )
-                    for order in quotes:
-                        near_book.append(order)
-                        logger.log(
-                            "quote",
-                            strategy="near_resolution",
-                            market=order.market,
-                            side=order.side,
-                            price=order.price,
-                            qty=order.qty,
-                            live=False,
-                        )
+                    last_quote_at[f"{strategy}:{snap.slug}"] = now_tick
+                return kept
+
+            maker_book = _replace(maker_book, maker_port, "maker")
+            near_book = _replace(near_book, near_port, "near_resolution")
 
         cap = config.paper.risk.max_account_risk_pct
         for name, port, book in (

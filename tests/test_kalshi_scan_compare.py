@@ -201,3 +201,43 @@ def test_last_trade_reads_yes_price_dollars():
         assert client.last_trade("KXDEMO") == Decimal("0.4700")
     finally:
         client.close()
+
+
+def test_trades_pages_min_ts_and_returns_oldest_first():
+    cfg = load_config()
+    client = KalshiClient(cfg)
+    calls = []
+
+    def fake_get(_base, path, params=None):
+        calls.append(params)
+        if not params.get("cursor"):
+            return {
+                "trades": [
+                    {
+                        "yes_price_dollars": "0.40",
+                        "count": "2",
+                        "created_time": "2026-09-29T12:01:00Z",
+                        "trade_id": "b",
+                    }
+                ],
+                "cursor": "c2",
+            }
+        return {
+            "trades": [
+                {
+                    "yes_price_dollars": "0.39",
+                    "count": "1",
+                    "created_time": "2026-09-29T12:00:00Z",
+                    "trade_id": "a",
+                }
+            ]
+        }
+
+    client._get = fake_get  # type: ignore[method-assign]
+    try:
+        tape = client.trades("KXRT-FOO", min_ts=1000)
+    finally:
+        client.close()
+    assert calls[0]["min_ts"] == 1000
+    assert [t.trade_id for t in tape] == ["a", "b"]
+    assert tape[0].qty == Decimal("1")
