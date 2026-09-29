@@ -168,17 +168,31 @@ def _in_window(ts: str, start: datetime) -> bool:
     return when >= start
 
 
+def _prior_row(rows: list[dict[str, Any]], start: datetime) -> dict[str, Any] | None:
+    prior = [r for r in rows if not _in_window(str(r.get("ts") or ""), start)]
+    return prior[-1] if prior else None
+
+
 def summarize(rows: list[dict[str, Any]], *, now: datetime | None = None) -> dict[str, Any]:
     now = now or datetime.now(timezone.utc)
     day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     week_start = now - timedelta(days=7)
 
+    def _delta(last: dict[str, Any], base: dict[str, Any] | None, key: str) -> Decimal:
+        cur = _dec(last.get(key))
+        if base is None:
+            return cur
+        return cur - _dec(base.get(key))
+
     def roll(window: str) -> dict[str, Any]:
         if window == "today":
-            picked = [r for r in rows if _in_window(str(r.get("ts") or ""), day_start)]
+            start = day_start
+            picked = [r for r in rows if _in_window(str(r.get("ts") or ""), start)]
         elif window == "7d":
-            picked = [r for r in rows if _in_window(str(r.get("ts") or ""), week_start)]
+            start = week_start
+            picked = [r for r in rows if _in_window(str(r.get("ts") or ""), start)]
         else:
+            start = None
             picked = list(rows)
         if not picked:
             return {
@@ -192,11 +206,12 @@ def summarize(rows: list[dict[str, Any]], *, now: datetime | None = None) -> dic
                 "points": 0,
             }
         last = picked[-1]
+        base = _prior_row(rows, start) if start is not None else None
         return {
-            "net_pnl": _dec(last.get("net_pnl")),
-            "realized": _dec(last.get("realized")),
-            "unrealized": _dec(last.get("unrealized")),
-            "fees": _dec(last.get("fees")),
+            "net_pnl": _delta(last, base, "net_pnl"),
+            "realized": _delta(last, base, "realized"),
+            "unrealized": _delta(last, base, "unrealized"),
+            "fees": _delta(last, base, "fees"),
             "max_drawdown": max((_dec(r.get("max_drawdown")) for r in picked), default=ZERO),
             "wins": int(last.get("wins") or 0),
             "losses": int(last.get("losses") or 0),

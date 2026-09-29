@@ -8,7 +8,7 @@ import httpx
 
 from polymarket_bot.config import DashboardConfig, TradingConfig, load_config
 from polymarket_bot.dashboard import build_snapshot, make_handler
-from polymarket_bot.pnl import append_pnl, history_path, load_history, summarize
+from polymarket_bot.pnl import append_pnl, history_path, load_history, snapshot_from_state, summarize
 from polymarket_bot.trading import read_toggle
 
 
@@ -145,3 +145,37 @@ def test_pnl_history_keeps_demo_and_paper_separate(tmp_path):
     assert rolled["all_time"]["net_pnl"] == Decimal("10")
     assert rolled["all_time"]["max_drawdown"] == Decimal("2")
     assert "X" in rolled["markets"]
+
+
+def test_pnl_windows_are_deltas_and_live_file_is_separate(tmp_path):
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime(2026, 9, 29, 12, 0, tzinfo=timezone.utc)
+    rows = [
+        snapshot_from_state(
+            {"live": False, "demo": False, "maker": {"equity": "100", "cash": "100", "net_pnl": "1", "realized_pnl": "1", "rebates": "0.10", "positions": {}, "max_drawdown": "0.2"}},
+            now=now - timedelta(days=10),
+        ),
+        snapshot_from_state(
+            {"live": False, "demo": False, "maker": {"equity": "110", "cash": "110", "net_pnl": "4", "realized_pnl": "3", "rebates": "0.20", "positions": {}, "max_drawdown": "0.5"}},
+            now=now - timedelta(days=3),
+        ),
+        snapshot_from_state(
+            {"live": False, "demo": False, "maker": {"equity": "120", "cash": "120", "net_pnl": "7", "realized_pnl": "5", "rebates": "0.30", "positions": {}, "max_drawdown": "0.6"}},
+            now=now,
+        ),
+    ]
+    rolled = summarize(rows, now=now)
+    assert rolled["all_time"]["net_pnl"] == Decimal("7")
+    assert rolled["last_7d"]["net_pnl"] == Decimal("6")  # 7 - 1
+    assert rolled["today"]["net_pnl"] == Decimal("3")  # 7 - 4
+    assert rolled["today"]["realized"] == Decimal("2")
+    assert rolled["today"]["fees"] == Decimal("0.10")
+    assert len(rolled["equity_points"]) == 3
+
+    base = tmp_path / "pnl.jsonl"
+    append_pnl(base, {"live": True, "demo": False, "maker": {"equity": "1", "cash": "1", "net_pnl": "0", "realized_pnl": "0", "rebates": "0", "positions": {}, "max_drawdown": "0"}})
+    assert history_path(base, "live").exists()
+    assert not history_path(base, "demo").exists() or history_path(base, "demo").read_text() == ""
+    assert "live" in history_path(base, "live").name
+    assert "demo" not in history_path(base, "live").name

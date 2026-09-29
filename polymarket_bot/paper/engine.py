@@ -353,6 +353,18 @@ def _run_paper_locked(
                 cap=format_risk_pct(cap),
                 live=False,
             )
+        try:
+            append_pnl(
+                config.dashboard.pnl_path,
+                {
+                    "live": False,
+                    "demo": False,
+                    "maker": maker_port.to_dict(mids),
+                    "near_resolution": near_port.to_dict(mids),
+                },
+            )
+        except Exception:
+            logger.log("pnl_error", error="failed to persist pnl history", live=False)
 
         prev = snaps
         if is_replay:

@@ -15,7 +15,7 @@ from urllib.parse import parse_qs, urlparse
 
 from polymarket_bot.config import AppConfig
 from polymarket_bot.logging_utils import json_default
-from polymarket_bot.pnl import env_name, load_history, summarize
+from polymarket_bot.pnl import env_name, history_path, load_history, snapshot_from_state, summarize
 from polymarket_bot.trading import set_trading_enabled, trading_status
 
 PAGE = """<!DOCTYPE html>
@@ -120,8 +120,8 @@ async function load(){
     w = w || {};
     return '<div class="card">'+title+'<br>net '+money(w.net_pnl)+'<br><span class="muted">real '+money(w.realized)+' · unreal '+money(w.unrealized)+' · fees '+money(w.fees)+'</span></div>';
   }
-  el('pnl', box('Today', p.today)+box('Last 7 days', p.last_7d)+box('All time', p.all_time)+'<div class="card">Drawdown / W-L<br>'+money(p.all_time && p.all_time.max_drawdown)+'<br><span class="muted">'+(p.all_time && p.all_time.wins || 0)+' / '+(p.all_time && p.all_time.losses || 0)+'</span></div>');
-  el('chart', spark(p.equity_points||[]));
+  el('pnl', box('Today', p.today)+box('Last 7 days', p.last_7d)+box('All time', p.all_time)+'<div class="card">Drawdown / W-L<br>'+money(p.all_time && p.all_time.max_drawdown)+'<br><span class="muted">'+(p.all_time && p.all_time.wins || 0)+'W / '+(p.all_time && p.all_time.losses || 0)+'L</span></div><div class="card">Fees (signed)<br><b>'+money(p.all_time && p.all_time.fees)+'</b></div>');
+  el('chart', spark(p.equity_points||[])+'<p class="muted">History file ('+(p.env||'')+'): '+(p.path||'')+' — demo/live/paper never mix</p>');
   const stratRows = Object.entries(p.strategies||{}).map(([k,v])=>[k, money(v.net_pnl), money(v.realized), money(v.unrealized), money(v.fees)]);
   const mktRows = Object.entries(p.markets||{}).map(([k,v])=>[k, v.strategy||'', v.qty, money(v.realized), money(v.unrealized)]);
   el('pnlBreak', '<p class="muted">Per strategy</p>'+table(stratRows,['strategy','net','realized','unreal','fees'])+'<p class="muted">Per market</p>'+table(mktRows,['market','strategy','qty','realized','unreal']));
@@ -309,7 +309,12 @@ def build_snapshot(
     if cmp_path.exists():
         compare = cmp_path.read_text()[-4000:]
     env = env_name(demo=bool(state.get("demo") or source == "demo"), live=False)
-    pnl = summarize(load_history(config.dashboard.pnl_path, env), now=now)
+    rows = load_history(config.dashboard.pnl_path, env)
+    if not rows and state:
+        rows = [snapshot_from_state(state, now=now)]
+    pnl = summarize(rows, now=now)
+    pnl["env"] = env
+    pnl["path"] = str(history_path(config.dashboard.pnl_path, env))
     equity = _dec((maker.get("equity") if maker else None) or state.get("ending_cash") or state.get("starting_cash"))
     cash = _dec(maker.get("cash") or state.get("ending_cash") or state.get("starting_cash"))
     exchange = (

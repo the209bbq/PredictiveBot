@@ -478,6 +478,20 @@ def run_demo_session(
                     demo=True,
                 )
                 port.record_equity(mids)
+                try:
+                    append_pnl(
+                        config.dashboard.pnl_path,
+                        {
+                            "live": False,
+                            "demo": True,
+                            "starting_cash": cash,
+                            "ending_cash": port.cash,
+                            "maker": port.to_dict(mids),
+                            "account_risk": last_risk,
+                        },
+                    )
+                except Exception:
+                    logger.log("pnl_error", error="failed to persist pnl history", live=False, demo=True)
             except DemoOrderError as exc:
                 logger.log("balance_error", error=str(exc), live=False)
 
