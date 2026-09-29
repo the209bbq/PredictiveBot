@@ -52,6 +52,8 @@ scanner:
   top_n: 12
 
 paper:
+  # two_sided_maker stays selectable. kalshi-demo overlays favorites_maker.
+  strategy: two_sided_maker
   starting_cash: 1000.00
   quote_size_contracts: 1
   max_markets: 5
@@ -178,6 +180,31 @@ paper:
     allow_market_risk_above_hard_max: false
   fills:
     require_strict_trade_through: true
+  # Maker-only weather favorites (default for environments.demo / kalshi-demo).
+  # KXHIGH settles on the official NWS station high, not a Weather Company
+  # forecast. Station traps / revisions are a known risk. No WH / Truth feeds.
+  # late_entry_enabled is this mode's own 15m–6h window; it does not flip
+  # two-sided `kxhigh_resolution_day_enabled` (that stays false).
+  favorites:
+    min_price: 0.80
+    max_price: 0.97
+    allow_yes: false
+    sides: [no]
+    max_hours_to_close: 6
+    min_hours_to_close: 0.25
+    quote_size_min: 1
+    quote_size_max: 3
+    max_position_per_market: 5
+    max_depth_fraction: 0.25
+    improve_ticks: 1
+    exit_if_below: null
+    allow_maker_fee_series: false
+    late_entry_enabled: true
+    fill_tag: favorites_late
+    fills_path: data/favorites_fills.jsonl
+    allow:
+      - KXHIGH
+      - KXRAIN
 
 compare:
   # Off. Cross-venue compare does not run, fetch, or appear on the dashboard.
@@ -214,7 +241,16 @@ record:
 
 environments:
   demo:
+    scanner:
+      min_hours_to_resolution: 0.25
+      min_bid_depth_contracts: 4
+      min_ask_depth_contracts: 4
     paper:
+      strategy: favorites_maker
+      series:
+        allow:
+          - KXHIGH
+          - KXRAIN
       risk:
         max_market_risk_score: 0.40
         allow_market_risk_above_hard_max: false

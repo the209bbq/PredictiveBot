@@ -15,6 +15,7 @@ from polymarket_bot.market_data.replay_client import ReplayClient
 from polymarket_bot.paper import maker, near_resolution
 from polymarket_bot.paper.fills import fill_qty, synthesize_tape
 from polymarket_bot.paper.portfolio import PaperOrder, Portfolio
+from polymarket_bot import favorites
 from polymarket_bot.market_risk import (
     PriceHistory,
     attach_market_risk,
@@ -132,6 +133,8 @@ def _choose_markets(
 ) -> list[MarketSnapshot]:
     if markets is not None:
         return list(markets)
+    if favorites.is_favorites_mode(config):
+        return scan_maker_universe(client, config, now=now)[: config.paper.max_markets]
     maker_picks = scan_maker_universe(client, config, now=now)[: config.paper.max_markets]
     near_picks = scan_near_resolution(client, config, now=now)
     seen: set[str] = set()
@@ -278,13 +281,16 @@ def _run_paper_locked(
                 limit=daily.loss_limit,
                 live=False,
             )
+        fav_mode = favorites.is_favorites_mode(config)
+        maker_name = favorites.STRATEGY if fav_mode else "maker"
         if daily.loss_halted:
-            maker_book = _cancel_all(maker_book, logger, "daily_loss_limit", "maker")
-            near_book = _cancel_all(near_book, logger, "daily_loss_limit", "near_resolution")
+            maker_book = _cancel_all(maker_book, logger, "daily_loss_limit", maker_name)
+            if not fav_mode:
+                near_book = _cancel_all(near_book, logger, "daily_loss_limit", "near_resolution")
 
         if maker_port.killed:
-            maker_book = _cancel_all(maker_book, logger, maker_port.kill_reason or "killed", "maker")
-        if near_port.killed:
+            maker_book = _cancel_all(maker_book, logger, maker_port.kill_reason or "killed", maker_name)
+        if near_port.killed and not fav_mode:
             near_book = _cancel_all(near_book, logger, near_port.kill_reason or "killed", "near_resolution")
 
         def process_book(book: list[PaperOrder], port: Portfolio) -> list[PaperOrder]:
@@ -324,20 +330,31 @@ def _run_paper_locked(
                         live=False,
                     )
                     continue
-                min_hours = (
-                    maker_min_hours(snap, config)
-                    if order.strategy == "maker"
-                    else config.paper.near_resolution.min_hours_to_resolution
-                )
-                if past_resolution_cutoff(snap, min_hours):
-                    logger.log(
-                        "cancel",
-                        strategy=order.strategy,
-                        market=order.market,
-                        reason="resolution_cutoff",
-                        live=False,
+                if order.strategy == favorites.STRATEGY:
+                    if not favorites.favorites_universe_ok(snap, config, now=tick_now):
+                        logger.log(
+                            "cancel",
+                            strategy=order.strategy,
+                            market=order.market,
+                            reason=favorites.skip_reason(snap, config, now=tick_now) or "series_filter",
+                            live=False,
+                        )
+                        continue
+                else:
+                    min_hours = (
+                        maker_min_hours(snap, config)
+                        if order.strategy == "maker"
+                        else config.paper.near_resolution.min_hours_to_resolution
                     )
-                    continue
+                    if past_resolution_cutoff(snap, min_hours):
+                        logger.log(
+                            "cancel",
+                            strategy=order.strategy,
+                            market=order.market,
+                            reason="resolution_cutoff",
+                            live=False,
+                        )
+                        continue
                 if order.strategy == "maker":
                     mode = quote_mode(snap, config, tick_now)
                     if mode == "halt" or not maker_universe_ok(snap, config, now=tick_now):
@@ -373,14 +390,26 @@ def _run_paper_locked(
                         "fill",
                         strategy=order.strategy,
                         market=order.market,
-                        side=order.side,
+                        side=getattr(order, "contract_side", None) or order.side,
                         price=order.price,
                         qty=qty,
                         rebate=fill.rebate,
                         reason=reason,
                         same_day=same_day,
+                        fill_tag=getattr(order, "fill_tag", "") or "",
                         live=False,
                     )
+                    if order.strategy == favorites.STRATEGY or getattr(order, "fill_tag", ""):
+                        favorites.log_favorites_fill(
+                            config,
+                            favorites.fill_row_from_order(
+                                order,
+                                snap=snap,
+                                filled_qty=qty,
+                                filled_at=tick_now,
+                                settings=favorites.favorites_settings(config),
+                            ),
+                        )
                     leftover = order.qty - qty
                     if leftover > 0:
                         remaining.append(
@@ -394,6 +423,8 @@ def _run_paper_locked(
                                 venue=order.venue,
                                 fee_type=order.fee_type,
                                 fee_multiplier=order.fee_multiplier,
+                                contract_side=getattr(order, "contract_side", "yes"),
+                                fill_tag=getattr(order, "fill_tag", "") or "",
                             )
                         )
                     continue
@@ -405,12 +436,14 @@ def _run_paper_locked(
             trading_on = False
             trading_reason = "daily_loss_limit"
         if not trading_on:
-            maker_book = _cancel_all(maker_book, logger, "trading_off", "maker")
-            near_book = _cancel_all(near_book, logger, "trading_off", "near_resolution")
+            maker_book = _cancel_all(maker_book, logger, "trading_off", maker_name)
+            if not fav_mode:
+                near_book = _cancel_all(near_book, logger, "trading_off", "near_resolution")
             logger.log("trading_paused", reason=trading_reason, live=False)
         else:
             maker_book = process_book(maker_book, maker_port)
-            near_book = process_book(near_book, near_port)
+            if not fav_mode:
+                near_book = process_book(near_book, near_port)
 
             now_tick = tick_now
             interval = config.paper.maker.requote_interval_seconds
@@ -446,7 +479,11 @@ def _run_paper_locked(
                                 reason="requote",
                                 live=False,
                             )
-                    if strategy == "maker":
+                    if strategy == favorites.STRATEGY:
+                        quotes = favorites.desired_quotes(
+                            snap, port, config, prefix, resting=kept, now=now_tick
+                        )
+                    elif strategy == "maker":
                         quotes = maker.desired_quotes(snap, port, config, prefix, resting=kept, now=now_tick)
                     else:
                         quotes = near_resolution.desired_quotes(
@@ -467,8 +504,9 @@ def _run_paper_locked(
                     last_quote_at[f"{strategy}:{snap.slug}"] = now_tick
                 return kept
 
-            maker_book = _replace(maker_book, maker_port, "maker")
-            near_book = _replace(near_book, near_port, "near_resolution")
+            maker_book = _replace(maker_book, maker_port, maker_name)
+            if not fav_mode:
+                near_book = _replace(near_book, near_port, "near_resolution")
 
         cap = config.paper.risk.max_account_risk_pct
         for name, port, book in (
@@ -513,8 +551,14 @@ def _run_paper_locked(
         elif sleep and tick < n_ticks - 1:
             time.sleep(config.paper.poll_interval_seconds)
 
-    maker_book = _cancel_all(maker_book, logger, "session_end", "maker")
-    near_book = _cancel_all(near_book, logger, "session_end", "near_resolution")
+    maker_book = _cancel_all(
+        maker_book,
+        logger,
+        "session_end",
+        favorites.STRATEGY if favorites.is_favorites_mode(config) else "maker",
+    )
+    if not favorites.is_favorites_mode(config):
+        near_book = _cancel_all(near_book, logger, "session_end", "near_resolution")
     mids = _mids(prev, maker_port, near_port)
     maker_port.record_equity(mids)
     near_port.record_equity(mids)
@@ -541,6 +585,7 @@ def _run_paper_locked(
         "market_risk": last_scores,
         "daily_limits": last_daily.as_dict() if last_daily else {},
         "daily_loss_limit_hit": bool(last_daily and last_daily.loss_halted),
+        "strategy": favorites.STRATEGY if favorites.is_favorites_mode(config) else "two_sided_maker",
     }
     logger.log("paper_end", live=False, maker_pnl=state["maker"]["net_pnl"], near_pnl=state["near_resolution"]["net_pnl"])
     try:

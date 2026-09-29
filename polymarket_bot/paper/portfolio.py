@@ -22,6 +22,8 @@ class PaperOrder:
     venue: str = "polymarket_us"
     fee_type: str | None = None
     fee_multiplier: Decimal = Decimal("1")
+    contract_side: str = "yes"
+    fill_tag: str = ""
 
 
 @dataclass
@@ -35,6 +37,7 @@ class Fill:
     strategy: str
     reason: str
     same_day: bool = False
+    fill_tag: str = ""
 
 
 @dataclass
@@ -154,6 +157,7 @@ class Portfolio:
             strategy=order.strategy,
             reason=reason,
             same_day=same_day,
+            fill_tag=getattr(order, "fill_tag", "") or "",
         )
         self.fills.append(fill)
         return fill
@@ -192,6 +196,7 @@ class Portfolio:
                     "strategy": f.strategy,
                     "reason": f.reason,
                     "same_day": f.same_day,
+                    "fill_tag": f.fill_tag,
                 }
                 for f in self.fills
             ],

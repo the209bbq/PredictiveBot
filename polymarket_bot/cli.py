@@ -21,6 +21,7 @@ from polymarket_bot.logging_utils import DecisionLogger, json_default
 from polymarket_bot.paper.engine import run_paper
 from polymarket_bot.paper.report import format_report
 from polymarket_bot.recorder import run_record
+from polymarket_bot import favorites
 from polymarket_bot.scanner import format_scan_table, scan_markets
 from polymarket_bot.trading import (
     TradingLock,
@@ -94,6 +95,28 @@ def cmd_report(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     path = Path(args.state or config.logging.state_path)
     print(format_report(json.loads(path.read_text())))
+    return 0
+
+
+def cmd_favorites_report(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    path = Path(args.fills) if args.fills else favorites.favorites_fills_path(config)
+    rows = favorites.load_fill_rows(path)
+    if args.reconcile:
+        client = KalshiClient(config, public_only=True) if args.live_reconcile else None
+        try:
+            rows = favorites.reconcile_fills(rows, client=client)
+            favorites.rewrite_fills(path, rows)
+        finally:
+            if client is not None:
+                client.close()
+    summary = favorites.summarize_fills(rows)
+    report = favorites.format_favorites_report(summary)
+    print(report)
+    if args.csv:
+        csv_path = Path(args.csv)
+        favorites.write_csv(rows, csv_path)
+        print(f"Wrote {csv_path}")
     return 0
 
 
@@ -302,6 +325,17 @@ def build_parser() -> argparse.ArgumentParser:
     report = sub.add_parser("report", help="Print last paper report")
     report.add_argument("--state", default=None)
     report.set_defaults(func=cmd_report)
+
+    fav = sub.add_parser("favorites-report", help="Favorites strategy fill log, Wilson CI, optional CSV")
+    fav.add_argument("--fills", default=None, help="JSONL path (default data/favorites_fills.jsonl)")
+    fav.add_argument("--csv", default=None, help="Write a CSV export")
+    fav.add_argument("--reconcile", action="store_true", help="Rewrite settlement / post-fill mids on the log")
+    fav.add_argument(
+        "--live-reconcile",
+        action="store_true",
+        help="Poll public Kalshi markets for settlement (no keys, no orders)",
+    )
+    fav.set_defaults(func=cmd_favorites_report)
 
     compare = sub.add_parser(
         "compare",

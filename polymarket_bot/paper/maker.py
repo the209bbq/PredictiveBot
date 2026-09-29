@@ -43,6 +43,10 @@ def desired_quotes(
     resting: list[PaperOrder] | None = None,
     now: datetime | None = None,
 ) -> list[PaperOrder]:
+    from polymarket_bot.favorites import is_favorites_mode
+
+    if is_favorites_mode(config):
+        return []
     maker = config.paper.maker
     if not maker.enabled:
         return []

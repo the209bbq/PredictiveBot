@@ -75,6 +75,8 @@ svg { background:#12181f; border-radius:6px; }
 <div id="fills"></div>
 <h2>Watched markets</h2>
 <div id="markets"></div>
+<h2>Favorites strategy</h2>
+<div id="favorites"></div>
 <h2>Strategy</h2>
 <div id="strategy"></div>
 <h2>Alerts / errors</h2>
@@ -142,6 +144,17 @@ async function load(){
     const over = m.over_threshold ? ' OVER' : '';
     return [m.slug, (m.score_display||'')+over, why];
   }), ['market','risk','components']));
+  const fav = s.favorites || {};
+  const favRows = [
+    ['N fills', fav.n_fills],
+    ['Settled', fav.n_settled],
+    ['Win rate', (fav.win_rate==null?'—':(Number(fav.win_rate)*100).toFixed(1)+'%')+' (Wilson '+(fav.win_lo95==null?'—':(Number(fav.win_lo95)*100).toFixed(1)+'%')+'–'+(fav.win_hi95==null?'—':(Number(fav.win_hi95)*100).toFixed(1)+'%')+')'],
+    ['Avg price / breakeven', fav.avg_price_paid],
+    ['P&L after fees', money(fav.pnl_after_fees)],
+    ['P&L / contract', fav.pnl_per_contract],
+    ['Avg adverse +1m', fav.avg_adverse_1m],
+  ];
+  el('favorites', table(favRows, ['metric','value'])+'<p class="muted">Maker-only late weather favorites. Hold to settlement. Tag '+(fav.fill_tag||'favorites_late')+'.</p>');
   el('strategy', '<pre>'+JSON.stringify({...(s.strategy||{}), exchange:s.exchange||null},null,2)+'</pre>');
   el('alerts', table((s.alerts||[]).map(a=>[a.ts||'', a.action||'', a.error||a.reason||JSON.stringify(a)]), ['ts','action','detail']));
 }
@@ -243,6 +256,39 @@ def _read_exchange(config: AppConfig, slugs: list[str]) -> dict[str, Any]:
     _EXCHANGE_CACHE["ts"] = now
     _EXCHANGE_CACHE["data"] = out
     return out
+
+
+def _favorites_panel(config: AppConfig) -> dict[str, Any]:
+    from polymarket_bot.favorites import (
+        favorites_fills_path,
+        favorites_settings,
+        is_favorites_mode,
+        load_fill_rows,
+        summarize_fills,
+    )
+
+    rows = load_fill_rows(favorites_fills_path(config))
+    summary = summarize_fills(rows)
+    settings = favorites_settings(config)
+    def _n(group: dict) -> dict[str, Any]:
+        return {k: v.get("n_settled", v.get("n")) for k, v in (group or {}).items()}
+
+    return {
+        "mode": "favorites_maker" if is_favorites_mode(config) else "off",
+        "fill_tag": settings.fill_tag,
+        "n_fills": summary.get("n_fills", 0),
+        "n_settled": summary.get("n_settled", 0),
+        "win_rate": summary.get("win_rate", 0),
+        "win_lo95": summary.get("win_lo95", 0),
+        "win_hi95": summary.get("win_hi95", 0),
+        "avg_price_paid": str(summary.get("avg_price_paid") or ""),
+        "pnl_after_fees": summary.get("pnl_after_fees"),
+        "pnl_per_contract": str(summary.get("pnl_per_contract") or ""),
+        "avg_adverse_1m": str(summary.get("avg_adverse_1m") or ""),
+        "by_series": _n(summary.get("by_series") or {}),
+        "by_side": _n(summary.get("by_side") or {}),
+        "by_horizon": _n(summary.get("by_horizon") or {}),
+    }
 
 
 def _normalize_fill(row: dict[str, Any]) -> dict[str, Any]:
@@ -370,12 +416,14 @@ def build_snapshot(
         "markets": markets,
         "market_risk_cap": state.get("market_risk_cap"),
         "strategy": {
+            "name": state.get("strategy") or ((config.extra.get("paper") or {}).get("strategy") if isinstance(config.extra, dict) else None),
             "trading": state.get("trading"),
             "ticks": state.get("ticks"),
             "quotes_placed": state.get("quotes_placed"),
             "maker_fills": maker.get("fill_count"),
             "near_fills": (state.get("near_resolution") or {}).get("fill_count"),
         },
+        "favorites": _favorites_panel(config),
         "alerts": alerts,
         "pnl": pnl,
     }

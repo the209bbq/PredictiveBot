@@ -29,10 +29,23 @@ def last_trade_changed(prev: MarketSnapshot | None, cur: MarketSnapshot) -> bool
     return cur.last_trade != prev.last_trade
 
 
+def _yes_space(order: PaperOrder) -> tuple[str, Decimal]:
+    """Map a favorite-side contract onto the YES book used by the tape.
+
+    Buying NO at p is economically a YES sell at 1-p. The public tape is YES.
+    """
+    side = getattr(order, "contract_side", "yes") or "yes"
+    if side == "no":
+        flipped = "sell" if order.side == "buy" else "buy"
+        return flipped, ONE - order.price
+    return order.side, order.price
+
+
 def queue_ahead(order: PaperOrder, snap: MarketSnapshot) -> Decimal:
-    levels = snap.bids if order.side == "buy" else snap.asks
+    yes_side, yes_price = _yes_space(order)
+    levels = snap.bids if yes_side == "buy" else snap.asks
     for lvl in levels:
-        if lvl.price == order.price:
+        if lvl.price == yes_price:
             return lvl.qty
     return ZERO
 
@@ -58,12 +71,13 @@ def _tape_fill(
     for trade in tape:
         if filled >= order.qty:
             break
-        if order.side == "buy":
-            through = trade.price < order.price
-            at_px = trade.price == order.price
+        yes_side, yes_price = _yes_space(order)
+        if yes_side == "buy":
+            through = trade.price < yes_price
+            at_px = trade.price == yes_price
         else:
-            through = trade.price > order.price
-            at_px = trade.price == order.price
+            through = trade.price > yes_price
+            at_px = trade.price == yes_price
         if through:
             take = min(order.qty - filled, trade.qty)
             if take > 0:
@@ -113,15 +127,16 @@ def _book_cross(
 ) -> str | None:
     if prev is None:
         return None
-    if order.side == "buy" and cur.best_ask is not None:
-        was_above = prev.best_ask is None or prev.best_ask >= order.price
-        crossed = (cur.best_ask < order.price) if strict else (cur.best_ask <= order.price)
+    yes_side, yes_price = _yes_space(order)
+    if yes_side == "buy" and cur.best_ask is not None:
+        was_above = prev.best_ask is None or prev.best_ask >= yes_price
+        crossed = (cur.best_ask < yes_price) if strict else (cur.best_ask <= yes_price)
         if was_above and crossed:
             return "book_cross"
         return None
-    if order.side == "sell" and cur.best_bid is not None:
-        was_below = prev.best_bid is None or prev.best_bid <= order.price
-        crossed = (cur.best_bid > order.price) if strict else (cur.best_bid >= order.price)
+    if yes_side == "sell" and cur.best_bid is not None:
+        was_below = prev.best_bid is None or prev.best_bid <= yes_price
+        crossed = (cur.best_bid > yes_price) if strict else (cur.best_bid >= yes_price)
         if was_below and crossed:
             return "book_cross"
     return None

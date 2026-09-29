@@ -72,7 +72,15 @@ def _market_ticker(market: dict) -> str:
 
 
 def _rank_for_books(client, listed, now, config) -> list[dict]:
+    from polymarket_bot.favorites import favorites_settings, is_favorites_mode
+
     cfg = config.scanner
+    min_hours = cfg.min_hours_to_resolution
+    max_hours = None
+    if is_favorites_mode(config):
+        settings = favorites_settings(config)
+        min_hours = settings.min_hours_to_close
+        max_hours = settings.max_hours_to_close
     ranked: list[tuple[Decimal, Decimal, str, dict]] = []
     for market in listed:
         snap = _snapshot(client, market, None, now, config)
@@ -81,7 +89,9 @@ def _rank_for_books(client, listed, now, config) -> list[dict]:
         if snap.spread > cfg.max_spread:
             continue
         hours = snap.hours_to_resolution
-        if hours is not None and hours < cfg.min_hours_to_resolution:
+        if hours is not None and hours < min_hours:
+            continue
+        if max_hours is not None and hours is not None and hours > max_hours:
             continue
         ranked.append((-liquidity_score(snap), snap.spread, _market_ticker(market), market))
     ranked.sort(key=lambda row: (row[0], row[1], row[2]))
@@ -130,10 +140,18 @@ def scan_maker_universe(
     listed = [m for m in _list_raw(client, config) if listed_market_ok(m, config, now=now)]
     picked = _rank_for_books(client, listed, now, config)
     snapshots = _fetch_books(client, picked, now, config)
+    from polymarket_bot.favorites import is_favorites_mode
+
     cap = config.paper.risk.max_market_risk_score
     kept = []
+    favorites = is_favorites_mode(config)
     for snap in snapshots:
-        if not is_liquid(snap, config.scanner):
+        if favorites:
+            if snap.stale or not snap.book_fetched:
+                continue
+            if snap.best_bid is None or snap.best_ask is None:
+                continue
+        elif not is_liquid(snap, config.scanner):
             continue
         if not maker_universe_ok(snap, config, now=now):
             continue

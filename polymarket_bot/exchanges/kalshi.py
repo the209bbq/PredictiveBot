@@ -225,6 +225,10 @@ class KalshiClient:
         tape = self.trades(slug, limit=1, max_pages=1)
         return tape[-1].price if tape else None
 
+    def get_market(self, ticker: str) -> dict[str, Any]:
+        """Public GET /markets/{ticker}. Used by favorites settlement reconcile."""
+        return self._get(self.data_base_url, f"/markets/{ticker}")
+
     def trades(
         self,
         slug: str,

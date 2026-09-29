@@ -35,6 +35,7 @@ from polymarket_bot.market_risk import (
 )
 from polymarket_bot.paper import maker
 from polymarket_bot.paper.portfolio import PaperOrder, Portfolio
+from polymarket_bot import favorites
 from polymarket_bot.daily_limits import refresh_daily_limits
 from polymarket_bot.paper.risk import (
     past_resolution_cutoff,
@@ -336,6 +337,7 @@ def run_demo_session(
     last_quote_at: datetime | None = None
     prev_snap: MarketSnapshot | None = None
     last_daily = None
+    seen_fav_fills: set[str] = set()
 
     logger.log(
         "demo_start",
@@ -456,13 +458,29 @@ def run_demo_session(
                         logger.log("cancel_error", error=str(exc), market=snap.slug, live=False)
 
             skip_reason = None
+            fav_mode = favorites.is_favorites_mode(config)
             mode = quote_mode(snap, config, now_tick)
-            if mode == "unwind" and not requote:
+            if mode == "unwind" and not requote and not fav_mode:
                 requote = True
             if not trading_on:
                 skip_reason = "trading_off"
             elif snap.stale or not snap.book_fetched:
                 skip_reason = "stale_book"
+            elif fav_mode:
+                if not favorites.favorites_universe_ok(snap, config, now=now_tick):
+                    skip_reason = favorites.skip_reason(snap, config, now=now_tick) or "series_filter"
+                    if not requote:
+                        try:
+                            canceller = getattr(client, "cancel_bot_demo_orders", None)
+                            if callable(canceller):
+                                canceller(confirm_demo=True)
+                            cancels += 1
+                        except DemoOrderError as exc:
+                            logger.log("cancel_error", error=str(exc), market=snap.slug, live=False)
+                elif is_live_in_game(snap):
+                    skip_reason = "live_in_game"
+                elif market_over_risk_threshold(snap, config.paper.risk.max_market_risk_score):
+                    skip_reason = "market_risk_score"
             elif mode == "halt" or not maker_universe_ok(snap, config, now=now_tick):
                 skip_reason = "series_filter"
                 if not requote:
@@ -491,9 +509,27 @@ def run_demo_session(
                     demo=True,
                 )
             elif requote:
-                desired = maker.desired_quotes(snap, port, config, f"d{tick}", now=now_tick)
+                if fav_mode:
+                    desired = favorites.desired_quotes(snap, port, config, f"d{tick}", now=now_tick)
+                else:
+                    desired = maker.desired_quotes(snap, port, config, f"d{tick}", now=now_tick)
                 for order in desired:
-                    side = "bid" if order.side == "buy" else "ask"
+                    if fav_mode:
+                        side = getattr(order, "contract_side", None) or "no"
+                        _bid, best_ask = favorites.side_book(snap, side)
+                        if favorites.would_cross(order.price, best_ask):
+                            logger.log(
+                                "skip_quote",
+                                reason="would_cross",
+                                market=snap.slug,
+                                side=side,
+                                price=order.price,
+                                live=False,
+                                demo=True,
+                            )
+                            continue
+                    else:
+                        side = "bid" if order.side == "buy" else "ask"
                     bal = {}
                     try:
                         bal = client.demo_balance(confirm_demo=True)
@@ -528,16 +564,18 @@ def run_demo_session(
                             price=str(order.price),
                             count=str(int(order.qty)),
                             confirm_demo=True,
+                            post_only=True,
                         )
                         quotes_placed += 1
                         placed_this_tick.append(order)
                         logger.log(
                             "quote",
-                            strategy="maker",
+                            strategy=favorites.STRATEGY if fav_mode else "maker",
                             market=order.market,
                             side=side,
                             price=order.price,
                             qty=order.qty,
+                            fill_tag=getattr(order, "fill_tag", "") or "",
                             order_id=_order_id(result),
                             live=False,
                             demo=True,
@@ -551,6 +589,25 @@ def run_demo_session(
                 fills = client.demo_fills(confirm_demo=True)
                 fill_snapshots = fills
                 logger.log("fills_snapshot", count=len(fills), live=False, demo=True)
+                if fav_mode:
+                    settings = favorites.favorites_settings(config)
+                    for row in fills:
+                        logged = favorites.fill_row_from_exchange(
+                            row if isinstance(row, dict) else {},
+                            snap=snap,
+                            placed_at=last_quote_at,
+                            settings=settings,
+                        )
+                        if favorites.log_favorites_fill(config, logged, seen_fav_fills):
+                            logger.log(
+                                "favorites_fill",
+                                ticker=logged.get("ticker"),
+                                side=logged.get("side"),
+                                price=logged.get("price"),
+                                fill_tag=logged.get("fill_tag"),
+                                live=False,
+                                demo=True,
+                            )
             except DemoOrderError as exc:
                 logger.log("fills_error", error=str(exc), live=False)
 
@@ -630,6 +687,7 @@ def run_demo_session(
                         "market_risk": last_scores,
                         "daily_limits": last_daily.as_dict() if last_daily else {},
                         "daily_loss_limit_hit": bool(last_daily and last_daily.loss_halted),
+                        "strategy": favorites.STRATEGY if fav_mode else "two_sided_maker",
                     },
                 )
             except Exception:
@@ -696,6 +754,7 @@ def run_demo_session(
         "cancels_scoped": True,
         "daily_limits": last_daily.as_dict() if last_daily else {},
         "daily_loss_limit_hit": bool(last_daily and last_daily.loss_halted),
+        "strategy": favorites.STRATEGY if favorites.is_favorites_mode(config) else "two_sided_maker",
     }
     logger.log(
         "demo_end",
@@ -725,6 +784,7 @@ def format_demo_report(state: dict[str, Any]) -> str:
         "DEMO ONLY — production trading disabled; no fund transfers",
         "",
         f"Host: {state.get('host')}",
+        f"Strategy: {state.get('strategy') or 'two_sided_maker'}",
         f"Data source: {state.get('source')}",
         f"Ticks: {state.get('ticks')}    Market: {', '.join(state.get('markets') or []) or '(none)'}",
         "",

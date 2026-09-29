@@ -195,6 +195,10 @@ def _kxhigh_ok(snap: MarketSnapshot, config: AppConfig) -> bool:
 
 def maker_min_hours(snap: MarketSnapshot, config: AppConfig) -> float:
     """Per-series hours floor. Default 24h; gas uses AAA blackout; KXHIGH same-day is 4h only if opted in."""
+    from polymarket_bot.favorites import favorites_settings, is_favorites_mode
+
+    if is_favorites_mode(config):
+        return float(favorites_settings(config).min_hours_to_close)
     series = series_ticker(snap)
     slug = (snap.slug or "").upper()
     if (series.startswith("KXHIGH") or slug.startswith("KXHIGH")) and kxhigh_resolution_day_enabled(config):
@@ -471,7 +475,11 @@ def listed_market_ok(
     now: datetime | None = None,
 ) -> bool:
     """Pre-book allow/deny using list metadata so tennis/NFL never consume book fetches."""
+    from polymarket_bot.favorites import favorites_listed_ok, is_favorites_mode
     from polymarket_bot.exchanges.kalshi import snapshot_from_kalshi
+
+    if is_favorites_mode(config):
+        return favorites_listed_ok(market, config, now=now)
 
     snap = snapshot_from_kalshi(market, None, now=now)
     if not filter_enabled(config) or not applies_to(snap):
@@ -499,6 +507,10 @@ def maker_universe_ok(
     now: datetime | None = None,
 ) -> bool:
     """True if the maker may consider this market. Risk score is still required."""
+    from polymarket_bot.favorites import favorites_universe_ok, is_favorites_mode
+
+    if is_favorites_mode(config):
+        return favorites_universe_ok(snap, config, now=now)
     if not filter_enabled(config) or not applies_to(snap):
         return True
     now = now or datetime.now(timezone.utc)
