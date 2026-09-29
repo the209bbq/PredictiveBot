@@ -31,6 +31,7 @@ from polymarket_bot.paper.risk import (
     snapshot_account_risk,
 )
 from polymarket_bot.scanner import scan_markets, scan_near_resolution
+from polymarket_bot.pnl import append_pnl
 from polymarket_bot.trading import TradingLock, trading_is_on
 
 
@@ -387,4 +388,8 @@ def _run_paper_locked(
         "market_risk": last_scores,
     }
     logger.log("paper_end", live=False, maker_pnl=state["maker"]["net_pnl"], near_pnl=state["near_resolution"]["net_pnl"])
+    try:
+        append_pnl(config.dashboard.pnl_path, state)
+    except Exception:
+        logger.log("pnl_error", error="failed to persist pnl history", live=False)
     return state

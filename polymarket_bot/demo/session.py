@@ -38,6 +38,7 @@ from polymarket_bot.paper.risk import (
     snapshot_account_risk,
     would_breach_account_risk,
 )
+from polymarket_bot.pnl import append_pnl
 from polymarket_bot.scanner import scan_markets
 from polymarket_bot.trading import TradingLock, TradingPaused, trading_is_on
 
@@ -548,6 +549,10 @@ def run_demo_session(
         live=False,
         demo=True,
     )
+    try:
+        append_pnl(config.dashboard.pnl_path, state)
+    except Exception:
+        logger.log("pnl_error", error="failed to persist pnl history", live=False, demo=True)
     return state
 
 

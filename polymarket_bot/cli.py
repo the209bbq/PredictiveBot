@@ -10,6 +10,7 @@ from pathlib import Path
 from polymarket_bot.account_risk import AccountRiskError, format_risk_pct
 from polymarket_bot.compare import collect_snapshots, compare_snapshots, format_compare_report
 from polymarket_bot.config import load_config
+from polymarket_bot.dashboard import serve_dashboard
 from polymarket_bot.demo.session import assert_demo_order_within_risk, format_demo_report, run_demo_session
 from polymarket_bot.market_risk import MarketRiskError, format_score
 from polymarket_bot.exchanges.factory import build_client
@@ -222,6 +223,16 @@ def cmd_trading(args: argparse.Namespace) -> int:
     return 0 if status["effective"] == "on" else 0
 
 
+def cmd_dashboard(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    host = args.host or config.dashboard.host
+    port = args.port if args.port is not None else config.dashboard.port
+    object.__setattr__(config.dashboard, "host", host)
+    object.__setattr__(config.dashboard, "port", port)
+    serve_dashboard(config)
+    return 0
+
+
 def cmd_live(_args: argparse.Namespace) -> int:
     start_live_trading()
     return 2
@@ -287,6 +298,11 @@ def build_parser() -> argparse.ArgumentParser:
     trading = sub.add_parser("trading", help="Turn order placement on or off without a code change")
     trading.add_argument("action", choices=["on", "off", "status"])
     trading.set_defaults(func=cmd_trading)
+
+    dash = sub.add_parser("dashboard", help="Local web page for status, risk, P&L, and the trading toggle")
+    dash.add_argument("--host", default=None, help="Bind address (default 127.0.0.1)")
+    dash.add_argument("--port", type=int, default=None, help="Port (default 8787)")
+    dash.set_defaults(func=cmd_dashboard)
 
     live = sub.add_parser("live", help="Disabled. Always raises.")
     live.set_defaults(func=cmd_live)

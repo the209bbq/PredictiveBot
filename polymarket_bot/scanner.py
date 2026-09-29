@@ -66,9 +66,13 @@ def _list_raw(client: MarketDataClient, config: AppConfig) -> list[dict]:
     )
 
 
+def _market_ticker(market: dict) -> str:
+    return str(market.get("ticker") or market.get("slug") or "")
+
+
 def _rank_for_books(client, listed, now, config) -> list[dict]:
     cfg = config.scanner
-    ranked: list[tuple[Decimal, Decimal, dict]] = []
+    ranked: list[tuple[Decimal, Decimal, str, dict]] = []
     for market in listed:
         snap = _snapshot(client, market, None, now, config)
         if snap.best_bid is None or snap.best_ask is None or snap.spread is None:
@@ -78,9 +82,9 @@ def _rank_for_books(client, listed, now, config) -> list[dict]:
         hours = snap.hours_to_resolution
         if hours is not None and hours < cfg.min_hours_to_resolution:
             continue
-        ranked.append((-liquidity_score(snap), snap.spread, market))
-    ranked.sort()
-    return [market for _, _, market in ranked[: cfg.max_book_fetches]]
+        ranked.append((-liquidity_score(snap), snap.spread, _market_ticker(market), market))
+    ranked.sort(key=lambda row: (row[0], row[1], row[2]))
+    return [market for _, _, _, market in ranked[: cfg.max_book_fetches]]
 
 
 def _fetch_books(client, markets, now, config) -> list[MarketSnapshot]:
@@ -138,9 +142,9 @@ def scan_near_resolution(
             continue
         if snap.spread is not None and snap.spread > config.scanner.max_spread:
             continue
-        candidates.append((-liquidity_score(snap), market))
-    candidates.sort()
-    picked = [market for _, market in candidates[: config.scanner.max_book_fetches]]
+        candidates.append((-liquidity_score(snap), _market_ticker(market), market))
+    candidates.sort(key=lambda row: (row[0], row[1]))
+    picked = [market for _, _, market in candidates[: config.scanner.max_book_fetches]]
     snapshots = _fetch_books(client, picked, now, config)
     kept = []
     for snap in snapshots:

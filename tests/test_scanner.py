@@ -138,6 +138,56 @@ class _RankClient:
         return None
 
 
+def test_scanner_tie_on_score_and_spread_does_not_compare_dicts():
+    cfg = load_config()
+
+    class _TieClient:
+        source_name = "tie-fake"
+        venue = "kalshi"
+
+        def __init__(self) -> None:
+            self.books: list[str] = []
+            twin = {
+                "status": "open",
+                "yes_bid_dollars": "0.49",
+                "yes_ask_dollars": "0.51",
+                "volume_fp": "1000",
+                "open_interest_fp": "1000",
+                "liquidity_dollars": "100",
+                "yes_bid_size_fp": "50",
+                "yes_ask_size_fp": "50",
+                "close_time": "2026-12-01T00:00:00Z",
+            }
+            self._markets = [
+                {**twin, "ticker": "KXTIE-B"},
+                {**twin, "ticker": "KXTIE-A"},
+            ]
+
+        def list_markets(self, *, limit, active=True, closed=False, offset=0, **_k):
+            return self._markets[offset : offset + limit]
+
+        def book(self, slug: str):
+            self.books.append(slug)
+            return {
+                "orderbook_fp": {
+                    "yes_dollars": [["0.4900", "50"]],
+                    "no_dollars": [["0.4900", "50"]],
+                }
+            }
+
+        def snapshot(self, market, book=None, *, now=None):
+            return snapshot_from_kalshi(market, book, now=now)
+
+        def close(self):
+            return None
+
+    client = _TieClient()
+    now = datetime(2026, 9, 28, 22, 0, tzinfo=timezone.utc)
+    rows = scan_markets(client, cfg, now=now)
+    assert {s.slug for s in rows} == {"KXTIE-A", "KXTIE-B"}
+    assert client.books[0] == "KXTIE-A"
+
+
 def test_scanner_ranks_by_liquidity_before_book_fetch():
     cfg = load_config()
     client = _RankClient()

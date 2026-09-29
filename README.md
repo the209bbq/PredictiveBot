@@ -14,11 +14,12 @@ This is a personal research tool, not financial advice. Prediction-market tradin
    - **Polymarket US** (docs.polymarket.us/fees, effective 25 Sep 2026): taker `0.0695 × C × p × (1−p)`, maker rebate `0.0125 × C × p × (1−p)`, banker's rounding.
 3. **Paper maker strategy** — spread-aware resting quotes: join the touch on a 1–2 tick book, improve by `improve_ticks` when the book is wider, inventory-skewed, never lock or cross (maker-only). Fills only on a strict trade-through or book cross-through. Kalshi last-trade is refreshed each live tick so trade-throughs can fire. Stale / unfetched books are not quoted or filled.
 4. **Paper near-resolution favorites** — own universe selected by hours-to-event (not the far-dated maker scan). Resting bids on ~94–98¢ contracts. Isolated book and P&L.
-5. **Per-market RISK SCORE (primary)** — each market gets a 0–1 score (shown as 0–100%) from recent mid volatility, jump size, spread width, book thinness, time-to-event urgency, 50/50 proximity on news-driven events, and a live-game floor of 0.95. Computed every loop. The bot only quotes markets **strictly below** `max_market_risk_score` (default `0.40`; hard max `0.50` unless `allow_market_risk_above_hard_max: true`). When a score rises to the threshold, existing quotes are cancelled and no new ones are placed. Live in-game sports (GAME tickers, vs/sports, in-progress phrases, kickoff already started, or same-day GAME) score at least 95%.
+5. **Per-market RISK SCORE (primary)** — each market gets a 0–1 score (shown as 0–100%) from recent mid volatility, jump size, spread width, book thinness, time-to-event urgency, 50/50 proximity on news-driven events, and a **100% floor for live games and player props** on a started or same-day game (GAME / event / series tickers, vs/sports, in-progress phrases, kickoff `occurrence_datetime`, or receiving/yards-style props tied to a game). Computed every loop. The bot only quotes markets **strictly below** `max_market_risk_score` (default `0.40`; hard max `0.50` unless `allow_market_risk_above_hard_max: true`). When a score rises to the threshold, existing quotes are cancelled and no new ones are placed.
 6. **Account-exposure cap (secondary)** — never more than a configurable fraction of account value at risk (default 40%, adjustable; hard max 40% unless `allow_account_risk_above_hard_max: true`). At-risk is worst-case loss on **all existing account positions** (including leftovers from earlier sessions) plus every resting order if it filled (YES buy at `p` → `p` per contract; sell/NO → `1-p`). An order that would push the total over the cap is rejected. The current risk percentage is logged and printed on the session report. Per-market and gross caps, daily-loss kill switch, cancel on mid jump, and `maker_min_hours_to_resolution` still apply (hours include kickoff).
 7. **Trading toggle** — `pmbot trading off` / `on` / `status` writes a small state file (AND'd with `trading.enabled` in config). Checked every loop iteration. When off, the bot cancels **its own** resting orders, stops quoting, and keeps running read-only. Only one trading process may run at a time (PID/flock lock).
 8. **Cross-venue comparison** — read-only match of similar events on Kalshi and Polymarket US, with the price gap **after both venues' taker fees**. `compare.min_net_edge` is **dollars per contract**, not a dollar total on `contract_size` contracts. Alerts only; it never trades the gap. Failed book fetches are skipped (no list-price fallback).
 9. **Kalshi demo session (opt-in)** — `pmbot kalshi-demo --confirm-demo` runs a quote / re-quote / cancel loop on the demo host, tracks balance / **all account positions** / fills, writes a session report with per-market risk scores, then cancels **only orders this bot placed** (`client_order_id` prefix `pmbot-` / tracked IDs) and verifies those are gone (loud alert if any remain). Account-wide `DELETE /portfolio/events/orders` is **emergency only**: `pmbot kalshi-demo --confirm-demo --emergency-cancel-all`. `pmbot kalshi-demo-order` still places a single demo order. Production URLs are refused. Signing auto-detects Ed25519 vs RSA.
+10. **Dashboard** — `pmbot dashboard` serves one auto-refreshing page: trading toggle (with confirm), DEMO vs LIVE banner, account value / cash / exposure, open positions, fills, per-market risk scores and components, alerts, compare text, and a P&L section (today / 7d / all-time, realized vs unrealized, per market/strategy, drawdown, win/loss, equity SVG). History is JSONL and demo/paper/live files never mix. No orders from the UI.
 
 ## Setup
 
@@ -96,6 +97,13 @@ python -m polymarket_bot trading status
 python -m polymarket_bot trading on
 ```
 
+Local dashboard (stdlib HTTP server, one HTML page, auto-refresh). Toggle is the only control and writes the same file as `pmbot trading`. No order placement from the UI. Default bind `127.0.0.1`. If you bind beyond localhost, set `DASHBOARD_TOKEN` and send it as `Authorization: Bearer …` or `?token=`.
+
+```bash
+python -m polymarket_bot dashboard
+python -m polymarket_bot dashboard --host 127.0.0.1 --port 8787
+```
+
 Kalshi **demo session** (quote / re-quote / cancel **this bot's** orders, then verify those are gone). Requires the env vars above, `kalshi.demo_orders_enabled: true`, and `--confirm-demo`. Uses demo books so tickers exist on the demo host:
 
 ```bash
@@ -168,7 +176,8 @@ Demo market prices may not match production. Scanner/paper default to **producti
 - `scanner.max_book_fetches` — books fetched after ranking (keep this small on Polymarket US).
 - `paper.maker.improve_ticks` — ticks to improve inside a wide book; 1–2 tick books join the touch.
 - `compare.min_net_edge` — **dollars per contract** after taker fees. `compare.contract_size` is only the clip used to print dollar totals.
-- `paper.risk.max_market_risk_score` — per-market score gate (default `0.40`, hard max `0.50`). Override only with `allow_market_risk_above_hard_max: true`. Components: volatility, jump, spread, thin book, urgency, coin-flip (news), live-game floor 0.95.
+- `paper.risk.max_market_risk_score` — per-market score gate (default `0.40`, hard max `0.50`). Override only with `allow_market_risk_above_hard_max: true`. Components: volatility, jump, spread, thin book, urgency, coin-flip (news), live-game/player-prop floor 1.00.
+- `dashboard.host` / `port` / `pnl_path` — local status page and JSONL P&L history (`logs/pnl_history_{paper,demo,live}.jsonl`).
 - `paper.risk.max_account_risk_pct` — secondary exposure cap (default `0.40`). Override the 40% hard max only with `allow_account_risk_above_hard_max: true`. Counts leftover account positions.
 - `paper.risk.maker_min_hours_to_resolution` — maker cutoff using the earliest of kickoff / expected expiration / close.
 - `trading.enabled` / `toggle_path` / `lock_path` — config master switch, CLI toggle file, and single-process lock.

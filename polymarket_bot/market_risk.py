@@ -3,8 +3,8 @@
 The bot only quotes markets strictly below `max_market_risk_score`
 (default 0.40, hard maximum 0.50 unless explicitly overridden).
 
-Components (each 0–1), then a weighted sum. A live in-game sports market
-floors the score at 0.95 so it can never clear the 0.50 hard max.
+Components (each 0–1), then a weighted sum. A live in-game sports market (including player props on a started
+or same-day game) floors the score at 1.00 so it can never be quoted.
 
     volatility  range of recent mids / 0.20
     jump        largest recent |Δmid| or |last−mid| / 0.15
@@ -16,7 +16,7 @@ floors the score at 0.95 so it can never clear the 0.50 hard max.
 
 score = min(1, 0.20·vol + 0.18·jump + 0.12·spread + 0.10·thin
               + 0.15·urgency + 0.15·coin)
-if live_game: score = max(score, 0.95)
+if live_game: score = 1.00
 """
 
 from __future__ import annotations
@@ -45,7 +45,13 @@ _LIVE_PHRASES = (
     "top of the", "bottom of the", "end of the",
 )
 _GAME_TICKER = re.compile(r"GAME", re.IGNORECASE)
+_DATE_TEAM = re.compile(r"\d{2}[A-Z]{3}\d{2}[A-Z]{4,}")
 _SPORTS = ("nfl", "nba", "mlb", "nhl", "ncaa", "wnba", "soccer", "epl", "football", "basketball")
+_PROP = (
+    "receiving", "rushing", "passing yards", "receiving yards", "rushing yards",
+    "touchdown", "anytime", "strikeout", "receptions", "completions",
+    "player prop", " yards", "rebounds", "assists +",
+)
 
 
 class MarketRiskError(ValueError):
@@ -72,40 +78,83 @@ def _clamp01(value: Decimal) -> Decimal:
     return value
 
 
-def _blob(snap: MarketSnapshot) -> str:
+def _market_ids(snap: MarketSnapshot) -> str:
+    market = (snap.raw or {}).get("market") or {}
     return " ".join(
         filter(
             None,
-            [snap.slug, snap.question, snap.event_title, snap.category, str(snap.status or "")],
+            [
+                snap.slug,
+                str(market.get("ticker") or ""),
+                str(market.get("series_ticker") or ""),
+                str(market.get("event_ticker") or ""),
+            ],
+        )
+    )
+
+
+def _blob(snap: MarketSnapshot) -> str:
+    market = (snap.raw or {}).get("market") or {}
+    return " ".join(
+        filter(
+            None,
+            [
+                snap.slug,
+                snap.question,
+                snap.event_title,
+                snap.category,
+                str(snap.status or ""),
+                str(market.get("series_ticker") or ""),
+                str(market.get("event_ticker") or ""),
+                str(market.get("yes_sub_title") or ""),
+                str(market.get("subtitle") or ""),
+            ],
         )
     ).lower()
 
 
+def looks_like_player_prop(snap: MarketSnapshot) -> bool:
+    text = _blob(snap)
+    return any(tok in text for tok in _PROP)
+
+
 def looks_like_game_market(snap: MarketSnapshot) -> bool:
-    slug = snap.slug or ""
-    if _GAME_TICKER.search(slug):
+    ids = _market_ids(snap)
+    if _GAME_TICKER.search(ids) or _DATE_TEAM.search(ids):
         return True
     text = _blob(snap)
     if any(tok in text for tok in (" vs ", " vs. ", " @ ")) and any(s in text for s in _SPORTS):
+        return True
+    if looks_like_player_prop(snap) and (
+        any(s in text for s in _SPORTS) or _GAME_TICKER.search(ids) or _DATE_TEAM.search(ids)
+    ):
         return True
     return False
 
 
 def is_live_in_game(snap: MarketSnapshot, *, now: datetime | None = None) -> bool:
-    """True for in-progress or same-day GAME markets. Those score ≥ 0.95."""
+    """True for in-progress games and player props on a started / same-day game.
+
+    Those markets score 100% and are never quoted. Kickoff uses occurrence
+    time when present; settlement close is ignored so live props cannot hide
+    behind a late official close.
+    """
     text = _blob(snap)
     if any(p in text for p in _LIVE_PHRASES):
         return True
-    if not looks_like_game_market(snap):
+    game_linked = looks_like_game_market(snap) or looks_like_player_prop(snap)
+    if not game_linked:
         return False
     hours = snap.hours_to_resolution
     market = (snap.raw or {}).get("market") or {}
-    occ = as_datetime(market.get("occurrence_datetime"))
+    occ = as_datetime(
+        market.get("occurrence_datetime") or market.get("event_occurrence_datetime")
+    )
     now = now or datetime.now(timezone.utc)
     if occ is not None and occ <= now:
         return True
-    # Same-day / imminent game: settlement close is often >6h after kickoff,
-    # which used to sneak past maker_min_hours_to_resolution.
+    # Same-day / in-window game or prop: official close is often hours after
+    # kickoff, which used to sneak past maker_min_hours_to_resolution.
     if hours is None or hours < 24:
         return True
     return False
@@ -203,7 +252,7 @@ def compute_market_risk(
     )
     score = _clamp01(score)
     if parts["live_game"] >= ONE:
-        score = max(score, Decimal("0.95"))
+        score = ONE
     return score, parts
 
 

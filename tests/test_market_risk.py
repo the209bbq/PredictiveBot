@@ -16,6 +16,8 @@ from polymarket_bot.market_risk import (
     format_score,
     is_live_in_game,
     is_news_driven,
+    looks_like_game_market,
+    looks_like_player_prop,
     market_over_risk_threshold,
     validate_market_risk_score,
 )
@@ -118,8 +120,44 @@ def test_live_nfl_game_scores_at_least_95():
     assert is_live_in_game(snap, now=now)
     score, parts = compute_market_risk(snap)
     assert parts["live_game"] == Decimal("1")
-    assert score >= Decimal("0.95")
+    assert score == Decimal("1")
     assert market_over_risk_threshold(snap, Decimal("0.40"))
+
+
+def test_live_player_prop_on_started_game_is_100_and_not_quoted():
+    now = datetime(2026, 9, 28, 22, 0, tzinfo=timezone.utc)
+    snap = snapshot_from_kalshi(
+        {
+            "ticker": "KXNFLRECV-26SEP28PHICHI-COOPER",
+            "title": "Cooper Kupp receiving yards",
+            "yes_sub_title": "Cooper receiving yards O/U 64.5",
+            "event_title": "PHI vs CHI",
+            "event_ticker": "KXNFLGAME-26SEP28PHICHI",
+            "series_ticker": "KXNFLRECV",
+            "category": "Sports",
+            "status": "active",
+            "yes_bid_dollars": "0.49",
+            "yes_ask_dollars": "0.51",
+            "occurrence_datetime": "2026-09-28T20:15:00Z",
+            "expected_expiration_time": "2026-09-29T04:00:00Z",
+            "close_time": "2026-09-29T08:00:00Z",
+        },
+        {
+            "orderbook_fp": {
+                "yes_dollars": [["0.4900", "80"]],
+                "no_dollars": [["0.4900", "80"]],
+            }
+        },
+        now=now,
+    )
+    assert looks_like_player_prop(snap) or looks_like_game_market(snap)
+    assert is_live_in_game(snap, now=now)
+    score, parts = compute_market_risk(snap)
+    assert parts["live_game"] == Decimal("1")
+    assert score == Decimal("1")
+    cfg = load_config()
+    port = Portfolio("maker", Decimal("1000"), Decimal("1000"))
+    assert desired_quotes(snap, port, cfg, "t0") == []
 
 
 def test_same_day_game_is_live_even_if_close_is_far():

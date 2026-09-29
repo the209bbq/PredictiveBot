@@ -128,6 +128,14 @@ class TradingConfig:
 
 
 @dataclass(frozen=True)
+class DashboardConfig:
+    host: str
+    port: int
+    refresh_seconds: float
+    pnl_path: Path
+
+
+@dataclass(frozen=True)
 class CompareConfig:
     max_markets_each: int
     min_title_score: float
@@ -147,6 +155,7 @@ class AppConfig:
     logging: LoggingConfig
     compare: CompareConfig
     trading: TradingConfig
+    dashboard: DashboardConfig
     path: Path
     extra: dict[str, Any] = field(default_factory=dict)
 
@@ -174,6 +183,7 @@ def load_config(path: str | Path | None = None) -> AppConfig:
     kalshi_raw = raw.get("kalshi") or {}
     compare_raw = raw.get("compare") or {}
     trading_raw = raw.get("trading") or {}
+    dash_raw = raw.get("dashboard") or {}
 
     risk_pct = _dec(risk_raw.get("max_account_risk_pct"), str(HARD_MAX_ACCOUNT_RISK_PCT))
     allow_above = bool(risk_raw.get("allow_account_risk_above_hard_max", False))
@@ -270,6 +280,12 @@ def load_config(path: str | Path | None = None) -> AppConfig:
             enabled=bool(trading_raw.get("enabled", True)),
             toggle_path=Path(trading_raw.get("toggle_path", "state/trading_toggle.json")),
             lock_path=Path(trading_raw.get("lock_path", "state/trading.lock")),
+        ),
+        dashboard=DashboardConfig(
+            host=str(dash_raw.get("host", "127.0.0.1")),
+            port=int(dash_raw.get("port", 8787)),
+            refresh_seconds=float(dash_raw.get("refresh_seconds", 3)),
+            pnl_path=Path(dash_raw.get("pnl_path", "logs/pnl_history.jsonl")),
         ),
         path=cfg_path,
         extra=raw,

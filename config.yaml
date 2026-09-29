@@ -100,3 +100,9 @@ logging:
   jsonl_path: logs/decisions.jsonl
   report_path: logs/paper_report.txt
   state_path: logs/paper_state.json
+
+dashboard:
+  host: 127.0.0.1
+  port: 8787
+  refresh_seconds: 3
+  pnl_path: logs/pnl_history.jsonl
