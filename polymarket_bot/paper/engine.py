@@ -15,8 +15,16 @@ from polymarket_bot.market_data.replay_client import ReplayClient
 from polymarket_bot.paper import maker, near_resolution
 from polymarket_bot.paper.fills import fill_reason
 from polymarket_bot.paper.portfolio import PaperOrder, Portfolio
-from polymarket_bot.paper.risk import check_daily_loss, past_resolution_cutoff, price_jumped
+from polymarket_bot.paper.risk import (
+    account_value_from_portfolio,
+    check_daily_loss,
+    format_risk_pct,
+    past_resolution_cutoff,
+    price_jumped,
+    snapshot_account_risk,
+)
 from polymarket_bot.scanner import scan_markets, scan_near_resolution
+from polymarket_bot.trading import TradingLock, trading_is_on
 
 
 def _mids(snaps: dict[str, MarketSnapshot]) -> dict[str, Decimal | None]:
@@ -99,13 +107,44 @@ def run_paper(
 ) -> dict[str, Any]:
     now = now or datetime.now(timezone.utc)
     n_ticks = ticks if ticks is not None else config.paper.ticks
-    maker_book: list[PaperOrder] = []
-    near_book: list[PaperOrder] = []
     maker_port = Portfolio("maker", config.paper.starting_cash, config.paper.starting_cash)
     near_port = Portfolio("near_resolution", config.paper.starting_cash, config.paper.starting_cash)
-    prev: dict[str, MarketSnapshot] = {}
 
     chosen = _choose_markets(client, config, now, markets)
+    lock = TradingLock(config.trading.lock_path)
+    lock.acquire()
+    try:
+        return _run_paper_locked(
+            client,
+            config,
+            logger,
+            n_ticks=n_ticks,
+            sleep=sleep,
+            now=now,
+            chosen=chosen,
+            maker_port=maker_port,
+            near_port=near_port,
+        )
+    finally:
+        lock.release()
+
+
+def _run_paper_locked(
+    client: MarketDataClient,
+    config: AppConfig,
+    logger: DecisionLogger,
+    *,
+    n_ticks: int,
+    sleep: bool,
+    now: datetime,
+    chosen: list[MarketSnapshot],
+    maker_port: Portfolio,
+    near_port: Portfolio,
+) -> dict[str, Any]:
+    maker_book: list[PaperOrder] = []
+    near_book: list[PaperOrder] = []
+    prev: dict[str, MarketSnapshot] = {}
+    last_risk: dict[str, dict[str, Any]] = {}
     logger.log(
         "paper_start",
         source=client.source_name,
@@ -216,42 +255,75 @@ def run_paper(
                 remaining.append(order)
             return remaining
 
-        maker_book = process_book(maker_book, maker_port)
-        near_book = process_book(near_book, near_port)
+        trading_on, trading_reason = trading_is_on(config)
+        if not trading_on:
+            maker_book = _cancel_all(maker_book, logger, "trading_off", "maker")
+            near_book = _cancel_all(near_book, logger, "trading_off", "near_resolution")
+            logger.log("trading_paused", reason=trading_reason, live=False)
+        else:
+            maker_book = process_book(maker_book, maker_port)
+            near_book = process_book(near_book, near_port)
 
-        # Replace quotes each tick (simulated cancel/replace, never sent live).
-        maker_book = _cancel_all(maker_book, logger, "requote", "maker") if maker_book else []
-        near_book = _cancel_all(near_book, logger, "requote", "near_resolution") if near_book else []
+            # Replace quotes each tick (simulated cancel/replace, never sent live).
+            maker_book = _cancel_all(maker_book, logger, "requote", "maker") if maker_book else []
+            near_book = _cancel_all(near_book, logger, "requote", "near_resolution") if near_book else []
 
-        prefix = f"t{tick}"
-        if not maker_port.killed:
-            for snap in universe:
-                quotes = maker.desired_quotes(snap, maker_port, config, prefix)
-                for order in quotes:
-                    maker_book.append(order)
-                    logger.log(
-                        "quote",
-                        strategy="maker",
-                        market=order.market,
-                        side=order.side,
-                        price=order.price,
-                        qty=order.qty,
-                        live=False,
+            prefix = f"t{tick}"
+            if not maker_port.killed:
+                for snap in universe:
+                    quotes = maker.desired_quotes(snap, maker_port, config, prefix, resting=maker_book)
+                    for order in quotes:
+                        maker_book.append(order)
+                        logger.log(
+                            "quote",
+                            strategy="maker",
+                            market=order.market,
+                            side=order.side,
+                            price=order.price,
+                            qty=order.qty,
+                            live=False,
+                        )
+            if not near_port.killed:
+                for snap in universe:
+                    quotes = near_resolution.desired_quotes(
+                        snap, near_port, config, prefix, resting=near_book
                     )
-        if not near_port.killed:
-            for snap in universe:
-                quotes = near_resolution.desired_quotes(snap, near_port, config, prefix)
-                for order in quotes:
-                    near_book.append(order)
-                    logger.log(
-                        "quote",
-                        strategy="near_resolution",
-                        market=order.market,
-                        side=order.side,
-                        price=order.price,
-                        qty=order.qty,
-                        live=False,
-                    )
+                    for order in quotes:
+                        near_book.append(order)
+                        logger.log(
+                            "quote",
+                            strategy="near_resolution",
+                            market=order.market,
+                            side=order.side,
+                            price=order.price,
+                            qty=order.qty,
+                            live=False,
+                        )
+
+        cap = config.paper.risk.max_account_risk_pct
+        for name, port, book in (
+            ("maker", maker_port, maker_book),
+            ("near_resolution", near_port, near_book),
+        ):
+            equity = account_value_from_portfolio(port, mids)
+            at_risk, frac = snapshot_account_risk(port, book, equity)
+            last_risk[name] = {
+                "at_risk": at_risk,
+                "equity": equity,
+                "pct": frac,
+                "pct_display": format_risk_pct(frac),
+                "cap": cap,
+                "cap_display": format_risk_pct(cap),
+            }
+            logger.log(
+                "account_risk",
+                strategy=name,
+                pct=format_risk_pct(frac),
+                at_risk=at_risk,
+                equity=equity,
+                cap=format_risk_pct(cap),
+                live=False,
+            )
 
         prev = snaps
         if is_replay:
@@ -264,6 +336,13 @@ def run_paper(
     mids = _mids(prev)
     maker_port.record_equity(mids)
     near_port.record_equity(mids)
+    maker_state = maker_port.to_dict(mids)
+    near_state = near_port.to_dict(mids)
+    if last_risk.get("maker"):
+        maker_state["account_risk"] = last_risk["maker"]
+    if last_risk.get("near_resolution"):
+        near_state["account_risk"] = last_risk["near_resolution"]
+    trading_on, trading_reason = trading_is_on(config)
     state = {
         "source": client.source_name,
         "venue": getattr(client, "venue", None),
@@ -271,8 +350,11 @@ def run_paper(
         "live": False,
         "ticks": n_ticks,
         "markets": [s.slug for s in chosen],
-        "maker": maker_port.to_dict(mids),
-        "near_resolution": near_port.to_dict(mids),
+        "maker": maker_state,
+        "near_resolution": near_state,
+        "trading": "on" if trading_on else "off",
+        "trading_reason": trading_reason,
+        "account_risk_cap": format_risk_pct(config.paper.risk.max_account_risk_pct),
     }
     logger.log("paper_end", live=False, maker_pnl=state["maker"]["net_pnl"], near_pnl=state["near_resolution"]["net_pnl"])
     return state

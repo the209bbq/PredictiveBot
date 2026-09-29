@@ -7,6 +7,12 @@ live_trading_enabled: false
 # Primary venue for scan/paper. polymarket_us remains available via --exchange.
 exchange: kalshi
 
+# Master switch. `pmbot trading off` pauses quoting without editing this file.
+trading:
+  enabled: true
+  toggle_path: state/trading_toggle.json
+  lock_path: state/trading.lock
+
 api:
   gateway_base_url: https://gateway.polymarket.us
   api_base_url: https://api.polymarket.us
@@ -68,6 +74,10 @@ paper:
     max_daily_loss: 25.00
     cancel_on_price_jump: 0.08
     maker_min_hours_to_resolution: 6
+    # Worst-case $ at risk / account value. Default and hard max 40%.
+    max_account_risk_pct: 0.40
+    # Required to set max_account_risk_pct above 0.40.
+    allow_account_risk_above_hard_max: false
   fills:
     require_strict_trade_through: true
 

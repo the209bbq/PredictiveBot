@@ -8,7 +8,12 @@ from polymarket_bot.config import AppConfig
 from polymarket_bot.fees import MAX_PRICE, MIN_PRICE
 from polymarket_bot.market_data import MarketSnapshot
 from polymarket_bot.paper.portfolio import PaperOrder, Portfolio
-from polymarket_bot.paper.risk import past_resolution_cutoff, would_breach_position
+from polymarket_bot.paper.risk import (
+    account_value_from_portfolio,
+    past_resolution_cutoff,
+    would_breach_account_risk,
+    would_breach_position,
+)
 
 STRATEGY = "maker"
 
@@ -32,6 +37,7 @@ def desired_quotes(
     portfolio: Portfolio,
     config: AppConfig,
     order_id_prefix: str,
+    resting: list[PaperOrder] | None = None,
 ) -> list[PaperOrder]:
     maker = config.paper.maker
     if not maker.enabled:
@@ -71,6 +77,9 @@ def desired_quotes(
         return []
 
     qty = config.paper.quote_size_contracts
+    booked = list(resting or [])
+    equity = account_value_from_portfolio(portfolio, {snap.slug: snap.mid})
+    cap = config.paper.risk.max_account_risk_pct
     orders: list[PaperOrder] = []
     for side, price in (("buy", bid), ("sell", ask)):
         if price is None:
@@ -84,17 +93,19 @@ def desired_quotes(
             continue
         if not portfolio.buying_power_ok(side, price, qty):
             continue
-        orders.append(
-            PaperOrder(
-                order_id=f"{order_id_prefix}-{snap.slug}-{side}",
-                market=snap.slug,
-                side=side,
-                price=price,
-                qty=qty,
-                strategy=STRATEGY,
-                venue=snap.venue,
-                fee_type=snap.fee_type,
-                fee_multiplier=snap.fee_multiplier,
-            )
+        candidate = PaperOrder(
+            order_id=f"{order_id_prefix}-{snap.slug}-{side}",
+            market=snap.slug,
+            side=side,
+            price=price,
+            qty=qty,
+            strategy=STRATEGY,
+            venue=snap.venue,
+            fee_type=snap.fee_type,
+            fee_multiplier=snap.fee_multiplier,
         )
+        if would_breach_account_risk(portfolio, booked, candidate, equity, cap):
+            continue
+        orders.append(candidate)
+        booked.append(candidate)
     return orders

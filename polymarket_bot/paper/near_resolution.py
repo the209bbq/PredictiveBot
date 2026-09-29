@@ -6,7 +6,11 @@ from polymarket_bot.config import AppConfig
 from polymarket_bot.market_data import MarketSnapshot
 from polymarket_bot.paper.maker import clamp_price
 from polymarket_bot.paper.portfolio import PaperOrder, Portfolio
-from polymarket_bot.paper.risk import would_breach_position
+from polymarket_bot.paper.risk import (
+    account_value_from_portfolio,
+    would_breach_account_risk,
+    would_breach_position,
+)
 
 STRATEGY = "near_resolution"
 
@@ -16,6 +20,7 @@ def desired_quotes(
     portfolio: Portfolio,
     config: AppConfig,
     order_id_prefix: str,
+    resting: list[PaperOrder] | None = None,
 ) -> list[PaperOrder]:
     near = config.paper.near_resolution
     if not near.enabled:
@@ -42,16 +47,20 @@ def desired_quotes(
         return []
     if not portfolio.buying_power_ok("buy", price, qty):
         return []
-    return [
-        PaperOrder(
-            order_id=f"{order_id_prefix}-{snap.slug}-buy",
-            market=snap.slug,
-            side="buy",
-            price=price,
-            qty=qty,
-            strategy=STRATEGY,
-            venue=snap.venue,
-            fee_type=snap.fee_type,
-            fee_multiplier=snap.fee_multiplier,
-        )
-    ]
+    candidate = PaperOrder(
+        order_id=f"{order_id_prefix}-{snap.slug}-buy",
+        market=snap.slug,
+        side="buy",
+        price=price,
+        qty=qty,
+        strategy=STRATEGY,
+        venue=snap.venue,
+        fee_type=snap.fee_type,
+        fee_multiplier=snap.fee_multiplier,
+    )
+    equity = account_value_from_portfolio(portfolio, {snap.slug: snap.mid})
+    if would_breach_account_risk(
+        portfolio, list(resting or []), candidate, equity, config.paper.risk.max_account_risk_pct
+    ):
+        return []
+    return [candidate]

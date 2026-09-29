@@ -3,10 +3,40 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import Iterable
 
+from polymarket_bot.account_risk import (
+    HARD_MAX_ACCOUNT_RISK_PCT,
+    AccountRiskError,
+    account_risk_fraction,
+    format_risk_pct,
+    total_at_risk,
+    validate_account_risk_pct,
+    worst_case_contract_risk,
+)
 from polymarket_bot.config import RiskConfig
 from polymarket_bot.market_data import MarketSnapshot
-from polymarket_bot.paper.portfolio import Portfolio
+from polymarket_bot.paper.portfolio import PaperOrder, Portfolio
+
+ZERO = Decimal("0")
+
+__all__ = [
+    "HARD_MAX_ACCOUNT_RISK_PCT",
+    "AccountRiskError",
+    "account_risk_fraction",
+    "account_value_from_portfolio",
+    "check_daily_loss",
+    "format_risk_pct",
+    "past_resolution_cutoff",
+    "positions_from_portfolio",
+    "price_jumped",
+    "snapshot_account_risk",
+    "total_at_risk",
+    "validate_account_risk_pct",
+    "would_breach_account_risk",
+    "would_breach_position",
+    "worst_case_contract_risk",
+]
 
 
 def price_jumped(prev: MarketSnapshot | None, cur: MarketSnapshot, threshold: Decimal) -> bool:
@@ -44,3 +74,46 @@ def check_daily_loss(portfolio: Portfolio, mids: dict, risk: RiskConfig) -> str 
     if loss >= risk.max_daily_loss:
         return "max_daily_loss"
     return None
+
+
+def positions_from_portfolio(portfolio: Portfolio) -> dict[str, tuple[Decimal, Decimal]]:
+    out: dict[str, tuple[Decimal, Decimal]] = {}
+    for slug, pos in portfolio.positions.items():
+        if pos.qty == 0:
+            continue
+        out[slug] = (pos.qty, pos.avg_price or ZERO)
+    return out
+
+
+def snapshot_account_risk(
+    portfolio: Portfolio,
+    resting: Iterable[PaperOrder],
+    account_value: Decimal,
+    proposed: PaperOrder | None = None,
+) -> tuple[Decimal, Decimal]:
+    orders = [(o.side, o.price, o.qty) for o in resting]
+    if proposed is not None:
+        orders.append((proposed.side, proposed.price, proposed.qty))
+    at_risk = total_at_risk(positions_from_portfolio(portfolio), orders)
+    return at_risk, account_risk_fraction(at_risk, account_value)
+
+
+def would_breach_account_risk(
+    portfolio: Portfolio,
+    resting: Iterable[PaperOrder],
+    proposed: PaperOrder,
+    account_value: Decimal,
+    cap: Decimal,
+) -> str | None:
+    _at_risk, frac = snapshot_account_risk(portfolio, resting, account_value, proposed)
+    if frac > cap:
+        return "account_risk_cap"
+    return None
+
+
+def account_value_from_portfolio(portfolio: Portfolio, mids: dict[str, Decimal | None]) -> Decimal:
+    merged = dict(mids)
+    for slug, pos in portfolio.positions.items():
+        if slug not in merged or merged[slug] is None:
+            merged[slug] = pos.avg_price or None
+    return portfolio.equity(merged)

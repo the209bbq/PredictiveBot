@@ -14,9 +14,10 @@ This is a personal research tool, not financial advice. Prediction-market tradin
    - **Polymarket US** (docs.polymarket.us/fees, effective 25 Sep 2026): taker `0.0695 × C × p × (1−p)`, maker rebate `0.0125 × C × p × (1−p)`, banker's rounding.
 3. **Paper maker strategy** — spread-aware resting quotes: join the touch on a 1–2 tick book, improve by `improve_ticks` when the book is wider, inventory-skewed, never lock or cross (maker-only). Fills only on a strict trade-through or book cross-through. Kalshi last-trade is refreshed each live tick so trade-throughs can fire. Stale / unfetched books are not quoted or filled.
 4. **Paper near-resolution favorites** — own universe selected by hours-to-event (not the far-dated maker scan). Resting bids on ~94–98¢ contracts. Isolated book and P&L.
-5. **Risk** — per-market and gross caps, daily-loss kill switch, cancel on mid jump, resolution cutoff. All in `config.yaml`.
-6. **Cross-venue comparison** — read-only match of similar events on Kalshi and Polymarket US, with the price gap **after both venues' taker fees**. `compare.min_net_edge` is **dollars per contract**, not a dollar total on `contract_size` contracts. Alerts only; it never trades the gap. Failed book fetches are skipped (no list-price fallback).
-7. **Kalshi demo session (opt-in)** — `pmbot kalshi-demo --confirm-demo` runs a quote / re-quote / cancel loop on the demo host, tracks balance / positions / fills, writes a session report, then cancel-all + verifies no resting orders remain (loud alert if any do). `pmbot kalshi-demo-order` still places a single demo order. Production URLs are refused. Signing auto-detects Ed25519 vs RSA.
+5. **Risk** — per-market and gross caps, daily-loss kill switch, cancel on mid jump, resolution cutoff, and a **total account-risk cap** (default and hard max 40% of cash + MTM). At-risk is worst-case loss on open positions plus every resting order if it filled (YES buy at `p` → `p` per contract; sell/NO → `1-p`). An order that would push the total over the cap is rejected. Setting `max_account_risk_pct` above `0.40` is refused unless `allow_account_risk_above_hard_max: true`. The current risk percentage is logged and printed on the session report.
+6. **Trading toggle** — `pmbot trading off` / `on` / `status` writes a small state file (AND'd with `trading.enabled` in config). Checked every loop iteration. When off, the bot cancels resting orders, stops quoting, and keeps running read-only. Only one trading process may run at a time (PID/flock lock).
+7. **Cross-venue comparison** — read-only match of similar events on Kalshi and Polymarket US, with the price gap **after both venues' taker fees**. `compare.min_net_edge` is **dollars per contract**, not a dollar total on `contract_size` contracts. Alerts only; it never trades the gap. Failed book fetches are skipped (no list-price fallback).
+8. **Kalshi demo session (opt-in)** — `pmbot kalshi-demo --confirm-demo` runs a quote / re-quote / cancel loop on the demo host, tracks balance / positions / fills, writes a session report, then cancel-all + verifies no resting orders remain (loud alert if any do). `pmbot kalshi-demo-order` still places a single demo order. Production URLs are refused. Signing auto-detects Ed25519 vs RSA.
 
 ## Setup
 
@@ -84,6 +85,14 @@ Cross-venue comparison (alerts only):
 
 ```bash
 python -m polymarket_bot compare
+```
+
+Pause or resume order placement without editing code (state file + config flag; checked every tick):
+
+```bash
+python -m polymarket_bot trading off
+python -m polymarket_bot trading status
+python -m polymarket_bot trading on
 ```
 
 Kalshi **demo session** (quote / re-quote / cancel, then verify no resting orders). Requires the env vars above, `kalshi.demo_orders_enabled: true`, and `--confirm-demo`. Uses demo books so tickers exist on the demo host:
@@ -156,6 +165,8 @@ Demo market prices may not match production. Scanner/paper default to **producti
 - `scanner.max_book_fetches` — books fetched after ranking (keep this small on Polymarket US).
 - `paper.maker.improve_ticks` — ticks to improve inside a wide book; 1–2 tick books join the touch.
 - `compare.min_net_edge` — **dollars per contract** after taker fees. `compare.contract_size` is only the clip used to print dollar totals.
+- `paper.risk.max_account_risk_pct` — fraction of account value that may be at risk (default/hard max `0.40`). Override only with `allow_account_risk_above_hard_max: true`.
+- `trading.enabled` / `toggle_path` / `lock_path` — config master switch, CLI toggle file, and single-process lock.
 
 ## What would be needed for Kalshi or Polymarket production (not enabled)
 

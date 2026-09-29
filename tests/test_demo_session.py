@@ -1,8 +1,14 @@
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from polymarket_bot.config import load_config
-from polymarket_bot.demo.session import format_demo_report, run_demo_session
+from polymarket_bot.account_risk import AccountRiskError
+from polymarket_bot.config import TradingConfig, load_config
+from polymarket_bot.demo.session import (
+    assert_demo_order_within_risk,
+    format_demo_report,
+    run_demo_session,
+)
+from polymarket_bot.trading import TradingPaused, set_trading_enabled
 from polymarket_bot.exchanges.kalshi import snapshot_from_kalshi
 from polymarket_bot.guard import DemoOrderError
 from polymarket_bot.logging_utils import DecisionLogger
@@ -153,3 +159,65 @@ def test_demo_session_requires_confirm_flag(tmp_path):
             pass
     finally:
         logger.close()
+
+
+def test_demo_session_pauses_when_trading_off(tmp_path):
+    cfg = load_config()
+    object.__setattr__(
+        cfg,
+        "trading",
+        TradingConfig(True, tmp_path / "toggle.json", tmp_path / "lock"),
+    )
+    set_trading_enabled(cfg.trading.toggle_path, False)
+    client = _DemoFake()
+    logger = DecisionLogger(tmp_path / "demo.jsonl")
+    try:
+        state = run_demo_session(
+            client,
+            cfg,
+            logger,
+            confirm_demo=True,
+            ticks=2,
+            ticker="KXDEMO-COIN",
+            sleep=False,
+        )
+    finally:
+        logger.close()
+    assert state["quotes_placed"] == 0
+    assert state["trading"] == "off"
+    assert "trading_paused" in (tmp_path / "demo.jsonl").read_text()
+    assert client.cancelled >= 1
+
+
+def test_assert_demo_order_respects_toggle_and_cap(tmp_path):
+    cfg = load_config()
+    object.__setattr__(
+        cfg,
+        "trading",
+        TradingConfig(True, tmp_path / "toggle.json", tmp_path / "lock"),
+    )
+    client = _DemoFake()
+    client.list_demo_orders = lambda **k: []  # type: ignore[method-assign]
+    set_trading_enabled(cfg.trading.toggle_path, False)
+    try:
+        assert_demo_order_within_risk(
+            client, cfg, ticker="KXDEMO-COIN", side="bid", price="0.50", count="1", confirm_demo=True
+        )
+        raise AssertionError("should have raised")
+    except TradingPaused:
+        pass
+    set_trading_enabled(cfg.trading.toggle_path, True)
+    object.__setattr__(cfg.paper.risk, "max_account_risk_pct", Decimal("0.01"))
+    try:
+        assert_demo_order_within_risk(
+            client,
+            cfg,
+            ticker="KXDEMO-COIN",
+            side="bid",
+            price="0.50",
+            count="1000",
+            confirm_demo=True,
+        )
+        raise AssertionError("should have raised")
+    except AccountRiskError as exc:
+        assert "exceed" in str(exc).lower()

@@ -77,6 +77,19 @@ def test_never_cross_or_lock():
             assert q.price > Decimal("0.50")
 
 
+def test_account_risk_cap_blocks_quote():
+    cfg = load_config()
+    object.__setattr__(
+        cfg.paper.risk,
+        "max_account_risk_pct",
+        Decimal("0.01"),
+    )
+    port = Portfolio("maker", Decimal("10"), Decimal("10"))
+    quotes = desired_quotes(_snap(bid="0.50", ask="0.51", tick="0.01"), port, cfg, "t0")
+    # 10 contracts * 0.50 = $5 on $10 equity = 50% > 1%
+    assert quotes == []
+
+
 def test_stale_book_not_quoted():
     cfg = load_config()
     port = Portfolio("maker", Decimal("1000"), Decimal("1000"))

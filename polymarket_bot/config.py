@@ -11,6 +11,7 @@ from typing import Any
 import yaml
 from dotenv import load_dotenv
 
+from polymarket_bot.account_risk import HARD_MAX_ACCOUNT_RISK_PCT, validate_account_risk_pct
 from polymarket_bot.guard import assert_paper_only
 
 
@@ -72,6 +73,8 @@ class RiskConfig:
     max_daily_loss: Decimal
     cancel_on_price_jump: Decimal
     maker_min_hours_to_resolution: float
+    max_account_risk_pct: Decimal
+    allow_account_risk_above_hard_max: bool
 
 
 @dataclass(frozen=True)
@@ -111,6 +114,13 @@ class KalshiConfig:
 
 
 @dataclass(frozen=True)
+class TradingConfig:
+    enabled: bool
+    toggle_path: Path
+    lock_path: Path
+
+
+@dataclass(frozen=True)
 class CompareConfig:
     max_markets_each: int
     min_title_score: float
@@ -129,6 +139,7 @@ class AppConfig:
     paper: PaperConfig
     logging: LoggingConfig
     compare: CompareConfig
+    trading: TradingConfig
     path: Path
     extra: dict[str, Any] = field(default_factory=dict)
 
@@ -155,6 +166,11 @@ def load_config(path: str | Path | None = None) -> AppConfig:
     log_raw = raw.get("logging") or {}
     kalshi_raw = raw.get("kalshi") or {}
     compare_raw = raw.get("compare") or {}
+    trading_raw = raw.get("trading") or {}
+
+    risk_pct = _dec(risk_raw.get("max_account_risk_pct"), str(HARD_MAX_ACCOUNT_RISK_PCT))
+    allow_above = bool(risk_raw.get("allow_account_risk_above_hard_max", False))
+    validate_account_risk_pct(risk_pct, allow_above_hard_max=allow_above)
 
     config = AppConfig(
         dry_run=bool(raw.get("dry_run", True)),
@@ -219,6 +235,8 @@ def load_config(path: str | Path | None = None) -> AppConfig:
                 max_daily_loss=_dec(risk_raw.get("max_daily_loss"), "25"),
                 cancel_on_price_jump=_dec(risk_raw.get("cancel_on_price_jump"), "0.08"),
                 maker_min_hours_to_resolution=float(risk_raw.get("maker_min_hours_to_resolution", 6)),
+                max_account_risk_pct=risk_pct,
+                allow_account_risk_above_hard_max=allow_above,
             ),
             fills=FillConfig(
                 require_strict_trade_through=bool(fills_raw.get("require_strict_trade_through", True)),
@@ -235,6 +253,11 @@ def load_config(path: str | Path | None = None) -> AppConfig:
             min_title_score=float(compare_raw.get("min_title_score", 0.34)),
             min_net_edge=_dec(compare_raw.get("min_net_edge"), "0.01"),
             contract_size=_dec(compare_raw.get("contract_size"), "100"),
+        ),
+        trading=TradingConfig(
+            enabled=bool(trading_raw.get("enabled", True)),
+            toggle_path=Path(trading_raw.get("toggle_path", "state/trading_toggle.json")),
+            lock_path=Path(trading_raw.get("lock_path", "state/trading.lock")),
         ),
         path=cfg_path,
         extra=raw,

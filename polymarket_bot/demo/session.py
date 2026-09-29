@@ -17,9 +17,17 @@ from polymarket_bot.guard import DemoOrderError
 from polymarket_bot.logging_utils import DecisionLogger
 from polymarket_bot.market_data import MarketSnapshot, as_decimal
 from polymarket_bot.market_data.errors import BookFetchError
+from polymarket_bot.account_risk import (
+    AccountRiskError,
+    account_risk_fraction,
+    format_risk_pct,
+    total_at_risk,
+)
 from polymarket_bot.paper import maker
-from polymarket_bot.paper.portfolio import Portfolio
+from polymarket_bot.paper.portfolio import PaperOrder, Portfolio
+from polymarket_bot.paper.risk import snapshot_account_risk, would_breach_account_risk
 from polymarket_bot.scanner import scan_markets
+from polymarket_bot.trading import TradingLock, TradingPaused, trading_is_on
 
 
 def _money(value: Any) -> str:
@@ -63,6 +71,43 @@ def _position_rows(payload: dict[str, Any] | list) -> list[dict[str, Any]]:
         if isinstance(rows, list):
             return [row for row in rows if isinstance(row, dict)]
     return []
+
+
+def _account_value_from_exchange(
+    balance: dict[str, Any],
+    positions: dict[str, Any] | list,
+    mids: dict[str, Decimal | None],
+) -> Decimal:
+    for key in ("portfolio_value", "equity", "account_value"):
+        parsed = _as_decimal(balance.get(key))
+        if parsed is not None and parsed > 0:
+            return parsed
+    cash = _balance_available(balance) or Decimal("0")
+    marked = Decimal("0")
+    for row in _position_rows(positions):
+        ticker = str(row.get("ticker") or row.get("market_ticker") or "")
+        qty = _as_decimal(row.get("position") or row.get("quantity") or row.get("qty"))
+        if not ticker or qty is None:
+            continue
+        mid = mids.get(ticker)
+        if mid is None:
+            mid = _as_decimal(row.get("market_exposure") or row.get("average_price"))
+        if mid is None:
+            continue
+        marked += qty * mid
+    return cash + marked
+
+
+def _orders_from_resting(rows: list[dict[str, Any]]) -> list[tuple[str, Decimal, Decimal]]:
+    out: list[tuple[str, Decimal, Decimal]] = []
+    for row in rows:
+        side = str(row.get("side") or row.get("action") or "")
+        price = _as_decimal(row.get("yes_price_dollars") or row.get("price") or row.get("yes_price"))
+        qty = _as_decimal(row.get("remaining_count") or row.get("count") or row.get("quantity"))
+        if not side or price is None or qty is None:
+            continue
+        out.append((side, price, qty))
+    return out
 
 
 def _sync_portfolio(port: Portfolio, positions: dict[str, Any] | list) -> None:
@@ -138,6 +183,56 @@ def _pick_market(
     return picks[0]
 
 
+def assert_demo_order_within_risk(
+    client: KalshiClient,
+    config: AppConfig,
+    *,
+    ticker: str,
+    side: str,
+    price: str,
+    count: str,
+    confirm_demo: bool,
+) -> Decimal:
+    """Refuse a one-shot demo order if trading is off or it would breach the cap."""
+    on, reason = trading_is_on(config)
+    if not on:
+        raise TradingPaused(f"Trading is off ({reason}). Run: pmbot trading on")
+    balance = client.demo_balance(confirm_demo=confirm_demo)
+    positions = {}
+    try:
+        positions = client.demo_positions(confirm_demo=confirm_demo)
+    except DemoOrderError:
+        positions = {}
+    resting_rows: list[dict[str, Any]] = []
+    lister = getattr(client, "list_demo_orders", None)
+    if callable(lister):
+        try:
+            resting_rows = list(lister(status="resting", confirm_demo=confirm_demo) or [])
+        except DemoOrderError:
+            resting_rows = []
+    px = Decimal(str(price))
+    qty = Decimal(str(count))
+    equity = _account_value_from_exchange(balance, positions, {ticker: px})
+    if equity <= 0:
+        equity = _balance_available(balance) or config.paper.starting_cash
+    pos_map: dict[str, tuple[Decimal, Decimal]] = {}
+    for row in _position_rows(positions):
+        slug = str(row.get("ticker") or row.get("market_ticker") or "")
+        q = _as_decimal(row.get("position") or row.get("quantity") or row.get("qty"))
+        avg = _as_decimal(row.get("average_price") or row.get("avg_price")) or px
+        if slug and q:
+            pos_map[slug] = (q, avg)
+    orders = _orders_from_resting(resting_rows)
+    orders.append((side, px, qty))
+    frac = account_risk_fraction(total_at_risk(pos_map, orders), equity)
+    if frac > config.paper.risk.max_account_risk_pct:
+        raise AccountRiskError(
+            f"Order rejected: account risk {format_risk_pct(frac)} would exceed "
+            f"cap {format_risk_pct(config.paper.risk.max_account_risk_pct)}."
+        )
+    return frac
+
+
 def run_demo_session(
     client: KalshiClient,
     config: AppConfig,
@@ -169,6 +264,8 @@ def run_demo_session(
     position_snapshots: list[dict[str, Any]] = []
     leftover_alert: str | None = None
     remaining: list[dict[str, Any]] = []
+    last_risk: dict[str, Any] = {}
+    last_trading = "on"
 
     logger.log(
         "demo_start",
@@ -179,17 +276,29 @@ def run_demo_session(
         demo=True,
     )
 
+    lock = TradingLock(config.trading.lock_path)
+    lock.acquire()
     try:
         for tick in range(n_ticks):
             snap = _refresh_snapshot(client, snap, logger)
+            trading_on, trading_reason = trading_is_on(config)
+            last_trading = "on" if trading_on else "off"
             try:
                 client.cancel_all_demo_orders(confirm_demo=True)
                 cancels += 1
-                logger.log("cancel", reason="requote", market=snap.slug, live=False, demo=True)
+                logger.log(
+                    "cancel",
+                    reason="trading_off" if not trading_on else "requote",
+                    market=snap.slug,
+                    live=False,
+                    demo=True,
+                )
             except DemoOrderError as exc:
                 logger.log("cancel_error", error=str(exc), market=snap.slug, live=False)
 
-            if snap.stale or not snap.book_fetched:
+            if not trading_on:
+                logger.log("trading_paused", reason=trading_reason, live=False, demo=True)
+            elif snap.stale or not snap.book_fetched:
                 logger.log("skip_quote", reason="stale_book", market=snap.slug, live=False)
             else:
                 try:
@@ -200,8 +309,35 @@ def run_demo_session(
                     logger.log("position_error", error=str(exc), live=False)
 
                 desired = maker.desired_quotes(snap, port, config, f"d{tick}")
+                placed_this_tick: list[PaperOrder] = []
                 for order in desired:
                     side = "bid" if order.side == "buy" else "ask"
+                    bal = {}
+                    try:
+                        bal = client.demo_balance(confirm_demo=True)
+                    except DemoOrderError:
+                        bal = start_balance
+                    equity = _account_value_from_exchange(
+                        bal, position_snapshots[-1] if position_snapshots else {}, {snap.slug: snap.mid}
+                    )
+                    if equity <= 0:
+                        equity = port.cash
+                    if would_breach_account_risk(
+                        port,
+                        placed_this_tick,
+                        order,
+                        equity,
+                        config.paper.risk.max_account_risk_pct,
+                    ):
+                        logger.log(
+                            "skip_quote",
+                            reason="account_risk_cap",
+                            market=snap.slug,
+                            side=side,
+                            live=False,
+                            demo=True,
+                        )
+                        continue
                     try:
                         result = client.place_demo_order(
                             ticker=snap.slug,
@@ -211,6 +347,7 @@ def run_demo_session(
                             confirm_demo=True,
                         )
                         quotes_placed += 1
+                        placed_this_tick.append(order)
                         logger.log(
                             "quote",
                             strategy="maker",
@@ -237,6 +374,29 @@ def run_demo_session(
                 avail = _balance_available(bal)
                 if avail is not None:
                     port.cash = avail
+                equity = _account_value_from_exchange(
+                    bal, position_snapshots[-1] if position_snapshots else {}, {snap.slug: snap.mid}
+                )
+                if equity <= 0:
+                    equity = port.cash
+                at_risk, frac = snapshot_account_risk(port, [], equity)
+                last_risk = {
+                    "at_risk": at_risk,
+                    "equity": equity,
+                    "pct": frac,
+                    "pct_display": format_risk_pct(frac),
+                    "cap": config.paper.risk.max_account_risk_pct,
+                    "cap_display": format_risk_pct(config.paper.risk.max_account_risk_pct),
+                }
+                logger.log(
+                    "account_risk",
+                    pct=last_risk["pct_display"],
+                    at_risk=at_risk,
+                    equity=equity,
+                    cap=last_risk["cap_display"],
+                    live=False,
+                    demo=True,
+                )
                 port.record_equity({snap.slug: snap.mid})
             except DemoOrderError as exc:
                 logger.log("balance_error", error=str(exc), live=False)
@@ -244,6 +404,7 @@ def run_demo_session(
             if sleep and tick < n_ticks - 1:
                 time.sleep(config.paper.poll_interval_seconds)
     finally:
+        lock.release()
         try:
             remaining = client.shutdown_demo_orders(confirm_demo=True)
         except DemoOrderError as exc:
@@ -290,6 +451,9 @@ def run_demo_session(
         "resting_leftover": remaining,
         "resting_alert": leftover_alert,
         "maker": port.to_dict({snap.slug: snap.mid}),
+        "trading": last_trading,
+        "account_risk": last_risk,
+        "account_risk_cap": format_risk_pct(config.paper.risk.max_account_risk_pct),
     }
     logger.log(
         "demo_end",
@@ -323,6 +487,11 @@ def format_demo_report(state: dict[str, Any]) -> str:
         f"Fills reported by demo API: {state.get('fill_count', 0)}",
         f"Starting balance/cash: {_money(state.get('starting_cash'))}",
         f"Ending balance/cash: {_money(state.get('ending_cash'))}",
+        f"Trading: {state.get('trading') or 'on'}",
+        (
+            f"Account risk: {(state.get('account_risk') or {}).get('pct_display', 'n/a')} "
+            f"(cap {state.get('account_risk_cap') or 'n/a'})"
+        ),
         "",
         "Positions",
     ]

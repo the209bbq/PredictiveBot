@@ -27,6 +27,12 @@ def format_strategy(block: dict[str, Any]) -> str:
     ]
     if block.get("killed"):
         lines.append(f"  Kill switch: {block.get('kill_reason')}")
+    risk = block.get("account_risk") or {}
+    if risk:
+        lines.append(
+            f"  Account risk: {risk.get('pct_display', risk.get('pct'))} "
+            f"of equity (cap {risk.get('cap_display', '')})"
+        )
     positions = block.get("positions") or {}
     if positions:
         lines.append("  Positions:")
@@ -54,6 +60,8 @@ def format_report(state: dict[str, Any]) -> str:
         f"Data source: {state.get('source')}",
         f"Venue: {state.get('venue') or 'n/a'}",
         f"Ticks: {state.get('ticks')}    Markets: {', '.join(state.get('markets') or []) or '(none)'}",
+        f"Trading: {state.get('trading') or 'on'}",
+        f"Account risk cap: {state.get('account_risk_cap') or '40.00%'}",
         "",
         "Maker-only quotes around mid",
         format_strategy(maker),

@@ -7,9 +7,10 @@ import json
 import sys
 from pathlib import Path
 
+from polymarket_bot.account_risk import AccountRiskError, format_risk_pct
 from polymarket_bot.compare import collect_snapshots, compare_snapshots, format_compare_report
 from polymarket_bot.config import load_config
-from polymarket_bot.demo.session import format_demo_report, run_demo_session
+from polymarket_bot.demo.session import assert_demo_order_within_risk, format_demo_report, run_demo_session
 from polymarket_bot.exchanges.factory import build_client
 from polymarket_bot.exchanges.kalshi import KalshiClient
 from polymarket_bot.guard import DemoOrderError, LiveTradingDisabled
@@ -18,6 +19,14 @@ from polymarket_bot.logging_utils import DecisionLogger, json_default
 from polymarket_bot.paper.engine import run_paper
 from polymarket_bot.paper.report import format_report
 from polymarket_bot.scanner import format_scan_table, scan_markets
+from polymarket_bot.trading import (
+    TradingLock,
+    TradingLockHeld,
+    TradingPaused,
+    set_trading_enabled,
+    trading_is_on,
+    trading_status,
+)
 
 
 def cmd_scan(args: argparse.Namespace) -> int:
@@ -109,8 +118,23 @@ def cmd_compare(args: argparse.Namespace) -> int:
 
 def cmd_kalshi_demo(args: argparse.Namespace) -> int:
     config = load_config(args.config)
+    on, reason = trading_is_on(config)
+    if not on:
+        print(f"Trading is off ({reason}). Run: pmbot trading on", file=sys.stderr)
+        return 2
     client = KalshiClient(config)
+    lock = TradingLock(config.trading.lock_path)
     try:
+        lock.acquire()
+        frac = assert_demo_order_within_risk(
+            client,
+            config,
+            ticker=args.ticker,
+            side=args.side,
+            price=args.price,
+            count=args.count,
+            confirm_demo=args.confirm_demo,
+        )
         result = client.place_demo_order(
             ticker=args.ticker,
             side=args.side,
@@ -119,8 +143,10 @@ def cmd_kalshi_demo(args: argparse.Namespace) -> int:
             confirm_demo=args.confirm_demo,
         )
     finally:
+        lock.release()
         client.close()
     print(json.dumps(result, indent=2, default=str))
+    print(f"Account risk after this order (if filled): {format_risk_pct(frac)}")
     print("Posted to Kalshi DEMO only. Production trading remains disabled.")
     return 0
 
@@ -155,6 +181,27 @@ def cmd_kalshi_demo_session(args: argparse.Namespace) -> int:
         print(state.get("resting_alert") or "ALERT: resting Kalshi DEMO orders remain.", file=sys.stderr)
         return 2
     return 0
+
+
+def cmd_trading(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    path = config.trading.toggle_path
+    if args.action == "on":
+        set_trading_enabled(path, True)
+        print(f"Trading ON (wrote {path})")
+        print("A running loop will resume quoting on its next iteration.")
+        return 0
+    if args.action == "off":
+        set_trading_enabled(path, False)
+        print(f"Trading OFF (wrote {path})")
+        print("A running loop will cancel resting orders and stay read-only.")
+        return 0
+    status = trading_status(config)
+    print(f"Trading: {status['effective']} ({status['reason']})")
+    print(f"  config.trading.enabled: {status['config_enabled']}")
+    print(f"  toggle file: {status['toggle_file'] or 'absent (treated as on)'}  ({status['toggle_path']})")
+    print(f"  lock file: {status['lock_path']}")
+    return 0 if status["effective"] == "on" else 0
 
 
 def cmd_live(_args: argparse.Namespace) -> int:
@@ -214,6 +261,10 @@ def build_parser() -> argparse.ArgumentParser:
     demo_session.add_argument("--confirm-demo", action="store_true")
     demo_session.set_defaults(func=cmd_kalshi_demo_session)
 
+    trading = sub.add_parser("trading", help="Turn order placement on or off without a code change")
+    trading.add_argument("action", choices=["on", "off", "status"])
+    trading.set_defaults(func=cmd_trading)
+
     live = sub.add_parser("live", help="Disabled. Always raises.")
     live.set_defaults(func=cmd_live)
     return parser
@@ -224,6 +275,6 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return int(args.func(args))
-    except (LiveTradingDisabled, DemoOrderError) as exc:
+    except (LiveTradingDisabled, DemoOrderError, TradingLockHeld, TradingPaused, AccountRiskError) as exc:
         print(str(exc), file=sys.stderr)
         return 2
