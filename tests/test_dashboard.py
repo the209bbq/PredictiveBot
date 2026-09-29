@@ -53,9 +53,10 @@ def test_build_snapshot_includes_risk_and_pnl(tmp_path):
         DashboardConfig("127.0.0.1", 8787, 3, tmp_path / "pnl.jsonl"),
     )
     append_pnl(cfg.dashboard.pnl_path, json.loads(state_path.read_text()))
-    snap = build_snapshot(cfg)
+    snap = build_snapshot(cfg, include_exchange=False)
     assert snap["environment"] == "PAPER"
     assert snap["live_trading_enabled"] is False
+    assert snap["exchange"]["quotes"] == {}
     assert snap["markets"][0]["slug"] == "KXDEMO-COIN"
     assert snap["exposure"]["pct_display"] == "12.00%"
     assert snap["pnl"]["all_time"]["net_pnl"] == Decimal("5.00")
@@ -86,6 +87,8 @@ def test_dashboard_http_toggle_and_auth(tmp_path, monkeypatch):
         page = httpx.get(f"{base}/", timeout=3)
         assert page.status_code == 200
         assert "Trading" in page.text
+        assert "switch" in page.text
+        assert "LIVE TRADING DISABLED" in page.text
         snap = httpx.get(f"{base}/api/snapshot", timeout=3).json()
         assert snap["environment"] in {"PAPER", "DEMO"}
         bad = httpx.post(f"{base}/api/trading", json={"enabled": False}, timeout=3)

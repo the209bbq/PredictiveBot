@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import secrets
+import time
 from datetime import datetime, timezone
 from decimal import Decimal
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -28,9 +29,14 @@ h1 { font-size: 1.2rem; margin: 0 0 .5rem; }
 h2 { font-size: .95rem; margin: 1.2rem 0 .4rem; border-bottom: 1px solid #2a3440; padding-bottom: .2rem; }
 .row { display:flex; flex-wrap:wrap; gap: .75rem; align-items:center; }
 .card { background:#1a222c; padding:.6rem .75rem; border-radius:8px; min-width:10rem; }
-.live { background:#4a1515; color:#ffd4d4; font-weight:700; padding:.25rem .5rem; border-radius:4px; }
+.live { background:#4a1515; color:#ffd4d4; font-weight:700; padding:.35rem .6rem; border-radius:4px; letter-spacing:.02em; }
 .demo { background:#153a24; color:#c6f5d5; padding:.25rem .5rem; border-radius:4px; }
-.off { opacity:.7; }
+.switch { position:relative; display:inline-block; width:46px; height:26px; vertical-align:middle; }
+.switch input { opacity:0; width:0; height:0; }
+.slider { position:absolute; cursor:pointer; inset:0; background:#4b5563; border-radius:26px; transition:.2s; }
+.slider:before { content:""; position:absolute; height:20px; width:20px; left:3px; bottom:3px; background:white; border-radius:50%; transition:.2s; }
+.switch input:checked + .slider { background:#2d6cdf; }
+.switch input:checked + .slider:before { transform:translateX(20px); }
 table { width:100%; border-collapse:collapse; font-size:.85rem; }
 td,th { text-align:left; padding:.2rem .35rem; border-bottom:1px solid #2a3440; vertical-align:top; }
 .muted { color:#8b98a5; font-size:.8rem; }
@@ -44,9 +50,11 @@ svg { background:#12181f; border-radius:6px; }
 <h1>PredictiveBot</h1>
 <div class="row">
   <div id="env"></div>
-  <label>Trading
+  <label class="switch" title="Trading on/off">
     <input type="checkbox" id="toggle"/>
+    <span class="slider"></span>
   </label>
+  <span>Trading</span>
   <span id="toggleReason" class="muted"></span>
   <span class="muted" id="updated"></span>
 </div>
@@ -99,8 +107,8 @@ function spark(points){
 async function load(){
   const r = await fetch('/api/snapshot');
   const s = await r.json();
-  const live = s.environment === 'LIVE';
-  el('env', live ? '<span class="live">LIVE — PRODUCTION DISABLED</span>' : '<span class="demo">'+s.environment+'</span>');
+  el('env', '<span class="demo">'+(s.environment||'PAPER')+'</span> <span class="live">LIVE TRADING DISABLED</span>');
+  if (s.exchange && s.exchange.error) document.getElementById('err').textContent = 'Exchange: '+s.exchange.error;
   document.getElementById('toggle').checked = s.trading.effective === 'on';
   el('toggleReason', s.trading.reason || '');
   el('updated', 'Updated '+ (s.updated_at || ''));
@@ -125,7 +133,7 @@ async function load(){
     const over = m.over_threshold ? ' OVER' : '';
     return [m.slug, (m.score_display||'')+over, why];
   }), ['market','risk','components']));
-  el('strategy', '<pre>'+JSON.stringify(s.strategy||{},null,2)+'</pre>');
+  el('strategy', '<pre>'+JSON.stringify({...(s.strategy||{}), exchange:s.exchange||null},null,2)+'</pre>');
   el('alerts', table((s.alerts||[]).map(a=>[a.ts||'', a.action||'', a.error||a.reason||JSON.stringify(a)]), ['ts','action','detail']));
   el('compare', '<pre>'+ (s.compare || '(none)') +'</pre>');
 }
@@ -180,6 +188,42 @@ def _dec(value: Any) -> Decimal | None:
         return None
 
 
+_EXCHANGE_CACHE: dict[str, Any] = {"ts": 0.0, "data": {"hours": None, "quotes": {}, "error": None}}
+
+
+def _read_exchange(config: AppConfig, slugs: list[str]) -> dict[str, Any]:
+    """Public, read-only venue calls. Never places or cancels orders."""
+    now = time.monotonic()
+    if now - float(_EXCHANGE_CACHE["ts"] or 0) < 20:
+        return dict(_EXCHANGE_CACHE["data"])
+    out: dict[str, Any] = {"hours": None, "quotes": {}, "error": None}
+    try:
+        from polymarket_bot.exchanges.factory import build_client
+
+        client = build_client(config, source="live", exchange=config.exchange)
+        try:
+            getter = getattr(client, "trading_hours", None)
+            if callable(getter):
+                out["hours"] = getter()
+            last_fn = getattr(client, "last_trade", None)
+            for slug in slugs[:6]:
+                if not slug or not callable(last_fn):
+                    continue
+                try:
+                    last = last_fn(slug)
+                except Exception:
+                    continue
+                if last is not None:
+                    out["quotes"][slug] = {"last_trade": last}
+        finally:
+            client.close()
+    except Exception as exc:
+        out["error"] = str(exc)
+    _EXCHANGE_CACHE["ts"] = now
+    _EXCHANGE_CACHE["data"] = out
+    return out
+
+
 def _pick_state(config: AppConfig) -> tuple[dict[str, Any], str]:
     paper = _read_json(config.logging.state_path)
     demo = _read_json(Path("logs/demo_state.json"))
@@ -194,7 +238,12 @@ def _pick_state(config: AppConfig) -> tuple[dict[str, Any], str]:
     return {}, "paper"
 
 
-def build_snapshot(config: AppConfig, *, now: datetime | None = None) -> dict[str, Any]:
+def build_snapshot(
+    config: AppConfig,
+    *,
+    now: datetime | None = None,
+    include_exchange: bool = True,
+) -> dict[str, Any]:
     now = now or datetime.now(timezone.utc)
     state, source = _pick_state(config)
     live_enabled = bool(config.live_trading_enabled)
@@ -249,10 +298,16 @@ def build_snapshot(config: AppConfig, *, now: datetime | None = None) -> dict[st
     pnl = summarize(load_history(config.dashboard.pnl_path, env), now=now)
     equity = _dec((maker.get("equity") if maker else None) or state.get("ending_cash") or state.get("starting_cash"))
     cash = _dec(maker.get("cash") or state.get("ending_cash") or state.get("starting_cash"))
+    exchange = (
+        _read_exchange(config, [m["slug"] for m in markets])
+        if include_exchange
+        else {"hours": None, "quotes": {}, "error": None}
+    )
     return {
         "updated_at": now.isoformat(),
         "environment": environment,
         "live_trading_enabled": False,
+        "exchange": exchange,
         "source": source,
         "trading": trading_status(config),
         "account_value": equity,
