@@ -64,6 +64,7 @@ def test_winning_day_has_no_pnl_cap(tmp_path):
 def test_empty_limits_resets_halt_after_pt_midnight(tmp_path):
     cfg = _cfg(tmp_path)
     afternoon = datetime(2026, 9, 29, 20, 0, tzinfo=timezone.utc)
+    refresh_daily_limits(cfg, equity=Decimal("1000"), capital_in_use=Decimal("0"), now=afternoon)
     refresh_daily_limits(cfg, equity=Decimal("940"), capital_in_use=Decimal("10"), now=afternoon)
     assert empty_limits(cfg, now=afternoon).loss_halted is True
     after = datetime(2026, 9, 30, 8, 0, tzinfo=timezone.utc)

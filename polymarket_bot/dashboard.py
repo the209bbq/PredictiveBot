@@ -430,7 +430,7 @@ def make_handler(config: AppConfig) -> type[BaseHTTPRequestHandler]:
                 return
             enabled = bool(body.get("enabled"))
             set_trading_enabled(config.trading.toggle_path, enabled)
-            payload = json.dumps(trading_status(config)).encode()
+            payload = json.dumps(trading_status(config), default=json_default).encode()
             self._send(200, payload, "application/json")
 
     return Handler

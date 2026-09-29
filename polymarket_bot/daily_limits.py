@@ -39,13 +39,13 @@ class DailyLimits:
     def as_dict(self) -> dict[str, Any]:
         return {
             "pt_date": self.pt_date,
-            "start_equity": self.start_equity,
-            "equity": self.equity,
-            "daily_pnl_usd": self.day_pnl,
-            "max_daily_loss_usd": self.loss_limit,
+            "start_equity": str(self.start_equity),
+            "equity": str(self.equity),
+            "daily_pnl_usd": str(self.day_pnl),
+            "max_daily_loss_usd": str(self.loss_limit),
             "daily_loss_limit_hit": self.loss_halted,
-            "daily_capital_in_use_usd": self.capital_in_use,
-            "max_daily_capital_in_use_usd": self.capital_limit,
+            "daily_capital_in_use_usd": str(self.capital_in_use),
+            "max_daily_capital_in_use_usd": str(self.capital_limit),
         }
 
 
