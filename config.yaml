@@ -103,10 +103,12 @@ paper:
       - KXXRPD
       - KXRAIN
     skip_maker_fee_series: true
-    # AAA daily update time not confirmed — leave disabled until set (HH:MM PT).
-    aaa_blackout_enabled: false
-    aaa_blackout_start: null
-    aaa_blackout_minutes: 30
+    # Gas stays off the allowlist. Windows apply if it is ever re-enabled.
+    # Daily (KXAAAGASD) closes 8:59 PM PT the night before; AAA prints ~4:06 AM PT.
+    aaa_evening_stop: "20:00"   # stop quoting daily gas from 8:00 PM PT until close
+    aaa_close: "20:59"
+    aaa_morning_blackout_start: "03:30"  # still-open daily + weekly KXAAAGASW
+    aaa_morning_blackout_end: "07:00"
     event_blackout_minutes: 30
     events:
       - name: jobs
@@ -178,6 +180,8 @@ record:
   directory: data/recordings
   rotate_mb: 64
   max_files: 20
+  # Unauthenticated public GETs only. production books are usable; demo books are thin.
+  data_host: production
 
 environments:
   demo:

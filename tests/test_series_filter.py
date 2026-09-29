@@ -6,6 +6,7 @@ from polymarket_bot.exchanges.kalshi import snapshot_from_kalshi
 from polymarket_bot.paper.maker import desired_quotes
 from polymarket_bot.paper.portfolio import PaperOrder, Portfolio
 from polymarket_bot.series_filter import (
+    gas_blackout,
     is_kxhigh_same_day,
     maker_min_hours,
     maker_universe_ok,
@@ -96,6 +97,21 @@ def test_touch_queue_and_maker_skips_denied():
     assert touch_queue(snap) == Decimal("80")
     port = Portfolio("maker", Decimal("1000"), Decimal("1000"))
     assert desired_quotes(snap, port, cfg, "t0") == []
+
+
+def test_gas_blackout_evening_daily_and_morning_weekly():
+    cfg = load_config()
+    daily = _kalshi("KXAAAGASD-30SEP26", series="KXAAAGASD", close="2026-09-30T04:00:00Z")
+    weekly = _kalshi("KXAAAGASW-05OCT26", series="KXAAAGASW", close="2026-10-05T13:00:00Z")
+    evening = datetime(2026, 9, 29, 3, 30, tzinfo=timezone.utc)  # 20:30 PT Sep 28
+    morning = datetime(2026, 9, 29, 12, 0, tzinfo=timezone.utc)  # 05:00 PT
+    midday = datetime(2026, 9, 29, 20, 0, tzinfo=timezone.utc)  # 13:00 PT
+    assert gas_blackout(daily, cfg, evening) is True
+    assert gas_blackout(weekly, cfg, evening) is False
+    assert gas_blackout(daily, cfg, morning) is True
+    assert gas_blackout(weekly, cfg, morning) is True
+    assert gas_blackout(daily, cfg, midday) is False
+    assert gas_blackout(weekly, cfg, midday) is False
 
 
 def test_kxhigh_same_day_fill_is_tagged():

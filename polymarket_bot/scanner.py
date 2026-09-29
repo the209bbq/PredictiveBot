@@ -9,8 +9,8 @@ from polymarket_bot.config import AppConfig, ScannerConfig
 from polymarket_bot.market_data import MarketDataClient, MarketSnapshot
 from polymarket_bot.market_data.errors import BookFetchError
 from polymarket_bot.market_data.normalize import snapshot_from_payloads
-from polymarket_bot.market_risk import attach_market_risk, format_score
-from polymarket_bot.series_filter import touch_queue
+from polymarket_bot.market_risk import attach_market_risk, format_score, market_over_risk_threshold
+from polymarket_bot.series_filter import listed_market_ok, maker_universe_ok, touch_queue
 
 
 def _snapshot(client: MarketDataClient, market: dict, book, now, config: AppConfig) -> MarketSnapshot:
@@ -117,6 +117,31 @@ def scan_markets(
     liquid = [s for s in snapshots if is_liquid(s, config.scanner)]
     liquid.sort(key=lambda s: (-liquidity_score(s), s.spread or Decimal("1"), s.slug or ""))
     return liquid[: config.scanner.top_n]
+
+
+def scan_maker_universe(
+    client: MarketDataClient,
+    config: AppConfig,
+    *,
+    now: datetime | None = None,
+) -> list[MarketSnapshot]:
+    """Allowlisted maker markets only. Filters series before spending book fetches."""
+    now = now or datetime.now(timezone.utc)
+    listed = [m for m in _list_raw(client, config) if listed_market_ok(m, config, now=now)]
+    picked = _rank_for_books(client, listed, now, config)
+    snapshots = _fetch_books(client, picked, now, config)
+    cap = config.paper.risk.max_market_risk_score
+    kept = []
+    for snap in snapshots:
+        if not is_liquid(snap, config.scanner):
+            continue
+        if not maker_universe_ok(snap, config, now=now):
+            continue
+        if market_over_risk_threshold(snap, cap):
+            continue
+        kept.append(snap)
+    kept.sort(key=lambda s: (-liquidity_score(s), s.spread or Decimal("1"), s.slug or ""))
+    return kept[: config.scanner.top_n]
 
 
 def scan_near_resolution(

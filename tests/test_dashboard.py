@@ -72,6 +72,33 @@ def test_build_snapshot_includes_risk_and_pnl(tmp_path):
     assert "compare" not in snap
 
 
+def test_dashboard_demo_env_uses_demo_state_only(tmp_path):
+    cfg = load_config(environment="demo")
+    paper = tmp_path / "paper_state.json"
+    paper.write_text(json.dumps({"live": False, "demo": False, "trading": "on", "ticks": 9}))
+    demo = tmp_path / "demo_state.json"
+    demo.write_text(
+        json.dumps(
+            {
+                "demo": True,
+                "live": False,
+                "running": True,
+                "quotes_placed": 3,
+                "ending_cash": "98.18",
+                "fills": [{"ticker": "KXDEMO-COIN", "side": "yes", "count_fp": "2.00", "yes_price_dollars": "0.50"}],
+                "maker": {"equity": "98.18", "cash": "98.18", "fills": []},
+            }
+        )
+    )
+    object.__setattr__(cfg.logging, "state_path", paper)
+    object.__setattr__(cfg.logging, "demo_state_path", demo)
+    snap = build_snapshot(cfg, include_exchange=False)
+    assert snap["environment"] == "DEMO"
+    assert snap["source"] == "demo"
+    assert snap["fills"][0]["qty"] == Decimal("2.00")
+    assert snap["fills"][0]["market"] == "KXDEMO-COIN"
+
+
 def test_dashboard_http_toggle_and_auth(tmp_path, monkeypatch):
     cfg = load_config()
     object.__setattr__(

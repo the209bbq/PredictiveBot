@@ -6,15 +6,17 @@ Secrets come from environment variables. No transfer endpoints are called.
 
 from __future__ import annotations
 
+import json
 import time
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 from typing import Any
 
 from polymarket_bot.config import AppConfig
 from polymarket_bot.exchanges.kalshi import KalshiClient
 from polymarket_bot.guard import DemoOrderError
-from polymarket_bot.logging_utils import DecisionLogger
+from polymarket_bot.logging_utils import DecisionLogger, json_default
 from polymarket_bot.market_data import MarketSnapshot, as_decimal
 from polymarket_bot.market_data.errors import BookFetchError
 from polymarket_bot.account_risk import (
@@ -41,8 +43,19 @@ from polymarket_bot.paper.risk import (
     would_breach_risk_limits,
 )
 from polymarket_bot.pnl import append_pnl
-from polymarket_bot.scanner import scan_markets
-from polymarket_bot.series_filter import maker_min_hours
+from polymarket_bot.kalshi_account import (
+    cash_dollars,
+    fill_qty as fill_qty_field,
+    mark_price,
+    marked_equity,
+    portfolio_value_dollars,
+    position_avg_price,
+    position_map,
+    position_qty,
+    position_rows,
+)
+from polymarket_bot.scanner import scan_maker_universe
+from polymarket_bot.series_filter import maker_min_hours, maker_universe_ok
 from polymarket_bot.trading import TradingLock, TradingPaused, trading_is_on
 
 
@@ -64,29 +77,11 @@ def _as_decimal(value: Any) -> Decimal | None:
 
 
 def _balance_available(payload: dict[str, Any]) -> Decimal | None:
-    for key in (
-        "balance",
-        "available_balance",
-        "available",
-        "portfolio_value",
-        "cash",
-    ):
-        parsed = _as_decimal(payload.get(key))
-        if parsed is not None:
-            return parsed
-    return None
+    return cash_dollars(payload)
 
 
 def _position_rows(payload: dict[str, Any] | list) -> list[dict[str, Any]]:
-    if isinstance(payload, list):
-        return [row for row in payload if isinstance(row, dict)]
-    if not isinstance(payload, dict):
-        return []
-    for key in ("market_positions", "positions", "event_positions"):
-        rows = payload.get(key)
-        if isinstance(rows, list):
-            return [row for row in rows if isinstance(row, dict)]
-    return []
+    return position_rows(payload)
 
 
 def _account_value_from_exchange(
@@ -94,24 +89,14 @@ def _account_value_from_exchange(
     positions: dict[str, Any] | list,
     mids: dict[str, Decimal | None],
 ) -> Decimal:
-    for key in ("portfolio_value", "equity", "account_value"):
-        parsed = _as_decimal(balance.get(key))
-        if parsed is not None and parsed > 0:
-            return parsed
-    cash = _balance_available(balance) or Decimal("0")
-    marked = Decimal("0")
-    for row in _position_rows(positions):
-        ticker = str(row.get("ticker") or row.get("market_ticker") or "")
-        qty = _as_decimal(row.get("position") or row.get("quantity") or row.get("qty"))
-        if not ticker or qty is None:
-            continue
-        mid = mids.get(ticker)
-        if mid is None:
-            mid = _as_decimal(row.get("market_exposure") or row.get("average_price"))
-        if mid is None:
-            continue
-        marked += qty * mid
-    return cash + marked
+    cash = cash_dollars(balance) or Decimal("0")
+    pos = position_map(positions)
+    pv = portfolio_value_dollars(balance)
+    if pos:
+        return marked_equity(cash, pos, mids, portfolio_value=pv)
+    if pv is not None:
+        return cash + pv
+    return cash
 
 
 def _orders_from_resting(rows: list[dict[str, Any]]) -> list[tuple[str, Decimal, Decimal]]:
@@ -127,13 +112,7 @@ def _orders_from_resting(rows: list[dict[str, Any]]) -> list[tuple[str, Decimal,
 
 
 def _position_avg_price(row: dict[str, Any], qty: Decimal) -> Decimal | None:
-    avg = _as_decimal(row.get("average_price") or row.get("avg_price") or row.get("avg_px"))
-    if avg is not None:
-        return abs(avg)
-    exposure = _as_decimal(row.get("market_exposure") or row.get("exposure"))
-    if exposure is not None and qty != 0:
-        return abs(exposure / qty)
-    return None
+    return position_avg_price(row, qty)
 
 
 def _sync_portfolio(port: Portfolio, positions: dict[str, Any] | list) -> None:
@@ -143,12 +122,12 @@ def _sync_portfolio(port: Portfolio, positions: dict[str, Any] | list) -> None:
         ticker = str(row.get("ticker") or row.get("market_ticker") or "")
         if not ticker:
             continue
-        qty = _as_decimal(row.get("position") or row.get("quantity") or row.get("qty"))
+        qty = position_qty(row)
         if qty is None:
             continue
         pos = port.position(ticker)
         pos.qty = qty
-        avg = _position_avg_price(row, qty)
+        avg = position_avg_price(row, qty)
         if avg is not None:
             pos.avg_price = avg
         seen.add(ticker)
@@ -188,6 +167,36 @@ def _refresh_snapshot(
     return refreshed
 
 
+def _position_mids(
+    client: KalshiClient,
+    port: Portfolio,
+    snap: MarketSnapshot,
+) -> dict[str, Decimal | None]:
+    """Mark every open position at mid (or conservative book / last trade)."""
+    mids: dict[str, Decimal | None] = {
+        snap.slug: mark_price(snap, port.position(snap.slug).qty, snap.last_trade)
+    }
+    getter = getattr(client, "last_trade", None)
+    for slug, pos in port.positions.items():
+        if pos.qty == 0 or slug == snap.slug:
+            continue
+        last = None
+        if callable(getter):
+            try:
+                last = getter(slug)
+            except Exception:
+                last = None
+        mids[slug] = last if last is not None else (pos.avg_price or None)
+    return mids
+
+
+def _write_demo_state(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, default=json_default, indent=2) + "\n")
+    tmp.replace(path)
+
+
 def _pick_market(
     client: KalshiClient,
     config: AppConfig,
@@ -213,9 +222,11 @@ def _pick_market(
         snap.stale = False
         snap.book_fetched = True
         return snap
-    picks = scan_markets(client, config, now=now)
+    picks = scan_maker_universe(client, config, now=now)
     if not picks:
-        raise DemoOrderError("No liquid Kalshi DEMO market matched the scanner filters.")
+        raise DemoOrderError(
+            "No eligible allowlisted Kalshi DEMO market (series allow/deny or risk-score gate)."
+        )
     return picks[0]
 
 
@@ -254,7 +265,7 @@ def assert_demo_order_within_risk(
     pos_map: dict[str, tuple[Decimal, Decimal]] = {}
     for row in _position_rows(positions):
         slug = str(row.get("ticker") or row.get("market_ticker") or "")
-        q = _as_decimal(row.get("position") or row.get("quantity") or row.get("qty"))
+        q = position_qty(row)
         if not slug or q is None or q == 0:
             continue
         avg = _position_avg_price(row, q) or px
@@ -386,7 +397,7 @@ def run_demo_session(
             except DemoOrderError as exc:
                 logger.log("position_error", error=str(exc), live=False)
 
-            mids_now = {snap.slug: snap.mid}
+            mids_now = _position_mids(client, port, snap)
             equity_now = port.equity(mids_now)
             at_risk_now, _ = snapshot_account_risk(port, placed_this_tick, equity_now)
             last_daily = refresh_daily_limits(
@@ -422,6 +433,8 @@ def run_demo_session(
                 skip_reason = "trading_off"
             elif snap.stale or not snap.book_fetched:
                 skip_reason = "stale_book"
+            elif not maker_universe_ok(snap, config, now=now_tick):
+                skip_reason = "series_filter"
             elif is_live_in_game(snap):
                 skip_reason = "live_in_game"
             elif market_over_risk_threshold(snap, config.paper.risk.max_market_risk_score):
@@ -508,10 +521,7 @@ def run_demo_session(
                 avail = _balance_available(bal)
                 if avail is not None:
                     port.cash = avail
-                mids = {snap.slug: snap.mid}
-                for slug, pos in port.positions.items():
-                    if slug not in mids or mids[slug] is None:
-                        mids[slug] = pos.avg_price or None
+                mids = _position_mids(client, port, snap)
                 equity = _account_value_from_exchange(
                     bal, position_snapshots[-1] if position_snapshots else {}, mids
                 )
@@ -552,6 +562,40 @@ def run_demo_session(
                     logger.log("pnl_error", error="failed to persist pnl history", live=False, demo=True)
             except DemoOrderError as exc:
                 logger.log("balance_error", error=str(exc), live=False)
+
+            try:
+                _write_demo_state(
+                    config.logging.demo_state_path,
+                    {
+                        "source": client.source_name,
+                        "venue": "kalshi",
+                        "demo": True,
+                        "live": False,
+                        "running": True,
+                        "ts": datetime.now(timezone.utc).isoformat(),
+                        "tick": tick + 1,
+                        "ticks": n_ticks,
+                        "host": client.demo_base_url,
+                        "markets": [snap.slug],
+                        "quotes_placed": quotes_placed,
+                        "cancels": cancels,
+                        "fill_count": len(fill_snapshots),
+                        "fills": fill_snapshots[-50:],
+                        "positions": position_snapshots[-1] if position_snapshots else {},
+                        "starting_cash": cash,
+                        "ending_cash": port.cash,
+                        "maker": port.to_dict({snap.slug: snap.mid}),
+                        "trading": last_trading,
+                        "account_risk": last_risk,
+                        "account_risk_cap": format_risk_pct(config.paper.risk.max_account_risk_pct),
+                        "market_risk_cap": format_score(config.paper.risk.max_market_risk_score),
+                        "market_risk": last_scores,
+                        "daily_limits": last_daily.as_dict() if last_daily else {},
+                        "daily_loss_limit_hit": bool(last_daily and last_daily.loss_halted),
+                    },
+                )
+            except Exception:
+                logger.log("demo_state_error", error="failed to persist live demo state", live=False, demo=True)
 
             if sleep and tick < n_ticks - 1:
                 time.sleep(config.paper.poll_interval_seconds)

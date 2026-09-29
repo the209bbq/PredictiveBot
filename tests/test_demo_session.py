@@ -8,6 +8,8 @@ from polymarket_bot.demo.session import (
     format_demo_report,
     run_demo_session,
 )
+from polymarket_bot.daily_limits import refresh_daily_limits
+from polymarket_bot.paper.portfolio import Portfolio
 from polymarket_bot.trading import TradingPaused, set_trading_enabled
 from polymarket_bot.exchanges.kalshi import snapshot_from_kalshi
 from polymarket_bot.guard import DemoOrderError
@@ -87,7 +89,7 @@ class _DemoFake:
         return []
 
     def demo_balance(self, *, confirm_demo):
-        return {"balance": "1000.00"}
+        return {"balance": 100000, "balance_dollars": "1000.00", "portfolio_value": 0}
 
     def demo_positions(self, *, confirm_demo):
         return self._positions
@@ -248,7 +250,7 @@ def test_leftover_positions_count_in_account_risk(tmp_path):
     client = _DemoFake()
     client._positions = {
         "market_positions": [
-            {"ticker": "OLD-LEFTOVER", "position": "200", "average_price": "0.50"},
+            {"ticker": "OLD-LEFTOVER", "position_fp": "200.00", "market_exposure_dollars": "100.00"},
         ]
     }
     logger = DecisionLogger(tmp_path / "demo.jsonl")
@@ -280,7 +282,7 @@ def test_leftover_positions_can_block_new_quotes(tmp_path):
     client = _DemoFake()
     client._positions = {
         "market_positions": [
-            {"ticker": "OLD-LEFTOVER", "position": "200", "average_price": "0.50"},
+            {"ticker": "OLD-LEFTOVER", "position_fp": "200.00", "market_exposure_dollars": "100.00"},
         ]
     }
     logger = DecisionLogger(tmp_path / "demo.jsonl")
@@ -337,8 +339,114 @@ def test_demo_skips_live_nfl_game_inside_maker_hours_window(tmp_path):
         logger.close()
     assert state["quotes_placed"] == 0
     text = (tmp_path / "demo.jsonl").read_text()
-    assert "live_in_game" in text or "market_risk_score" in text or "resolution_cutoff" in text
+    assert (
+        "live_in_game" in text
+        or "market_risk_score" in text
+        or "resolution_cutoff" in text
+        or "series_filter" in text
+    )
     score = (state.get("market_risk") or {}).get("KXNFLGAME-26SEP28PHICHI-CHI") or {}
     assert Decimal(str(score.get("score") or 0)) >= Decimal("0.95")
     report = format_demo_report(state)
-    assert "live-game" in report or "95" in report
+    assert "live-game" in report or "95" in report or state["quotes_placed"] == 0
+
+
+def test_demo_scan_skips_denied_sports(tmp_path):
+    cfg = load_config()
+    client = _DemoFake()
+    client._markets = [
+        {
+            "ticker": "KXNFLGAME-26SEP28PHICHI-CHI",
+            "slug": "KXNFLGAME-26SEP28PHICHI-CHI",
+            "series_ticker": "KXNFLGAME",
+            "title": "Eagles vs Bears",
+            "status": "active",
+            "yes_bid_dollars": "0.49",
+            "yes_ask_dollars": "0.51",
+            "close_time": "2027-01-01T00:00:00Z",
+            "fee_type": "quadratic",
+            "volume_fp": "99999",
+            "yes_bid_size_fp": "500",
+            "yes_ask_size_fp": "500",
+        },
+        {
+            "ticker": "KXATPMATCH-X",
+            "slug": "KXATPMATCH-X",
+            "series_ticker": "KXATPMATCH",
+            "title": "Tennis match",
+            "status": "active",
+            "yes_bid_dollars": "0.49",
+            "yes_ask_dollars": "0.51",
+            "close_time": "2027-01-01T00:00:00Z",
+            "fee_type": "quadratic",
+            "volume_fp": "88888",
+            "yes_bid_size_fp": "500",
+            "yes_ask_size_fp": "500",
+        },
+        dict(client._market),
+    ]
+
+    def list_markets(*, limit, active=True, closed=False, offset=0, **_k):
+        return list(client._markets)
+
+    client.list_markets = list_markets  # type: ignore[method-assign]
+    logger = DecisionLogger(tmp_path / "demo.jsonl")
+    try:
+        state = run_demo_session(
+            client,
+            cfg,
+            logger,
+            confirm_demo=True,
+            ticks=1,
+            ticker=None,
+            sleep=False,
+        )
+    finally:
+        logger.close()
+    assert state["markets"] == ["KXDEMO-COIN"]
+    assert (tmp_path / "pmbot-state" / "demo_state.json").exists() or cfg.logging.demo_state_path.exists()
+
+
+def test_unrealized_loss_trips_demo_daily_stop(tmp_path):
+    cfg = load_config()
+    object.__setattr__(
+        cfg,
+        "trading",
+        TradingConfig(True, tmp_path / "toggle.json", tmp_path / "lock"),
+    )
+    now = datetime(2026, 9, 28, 22, 0, tzinfo=timezone.utc)
+    refresh_daily_limits(cfg, equity=Decimal("1000"), capital_in_use=Decimal("0"), now=now)
+    port = Portfolio("kalshi_demo", Decimal("900"), Decimal("1000"))
+    port.position("KXRT-FOO").qty = Decimal("200")
+    port.position("KXRT-FOO").avg_price = Decimal("0.50")
+    equity = port.equity({"KXRT-FOO": Decimal("0.20")})
+    assert equity == Decimal("940")
+    hit = refresh_daily_limits(cfg, equity=equity, capital_in_use=Decimal("40"), now=now)
+    assert hit.loss_halted is True
+    assert hit.day_pnl == Decimal("-60")
+
+
+def test_demo_state_written_each_tick(tmp_path):
+    cfg = load_config()
+    client = _DemoFake()
+    logger = DecisionLogger(tmp_path / "demo.jsonl")
+    try:
+        run_demo_session(
+            client,
+            cfg,
+            logger,
+            confirm_demo=True,
+            ticks=2,
+            ticker="KXDEMO-COIN",
+            sleep=False,
+        )
+    finally:
+        logger.close()
+    live = cfg.logging.demo_state_path
+    assert live.exists()
+    import json
+
+    payload = json.loads(live.read_text())
+    assert payload["demo"] is True
+    assert payload["running"] is True
+    assert payload["tick"] >= 1

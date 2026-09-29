@@ -171,6 +171,7 @@ The adapter and fee model remain in the tree. They are not run, fetched, or show
 - `paper.risk.max_daily_loss_usd` — default `50` (replaces `max_daily_loss: 25`). PT midnight–midnight. Halt, cancel, ALERT, dashboard state; auto-resume next PT day.
 - `environments.demo` / `environments.live` — same `max_market_risk_score: 0.40` as paper. No 1.0 demo override.
 - `record.*` — `pmbot record` interval, top-of-book levels, jsonl/parquet, rotation. Each snapshot includes `tape` and `candles_1m`.
+- `record.data_host` — `production` (default) or `demo`. Unauthenticated public GETs only (markets, orderbook, trades, candlesticks). Never loads keys and has no order path. Demo books are too thin for backtests.
 - `compare.enabled` — off. Cross-venue compare does not run unless this and `polymarket_us_enabled` are both true.
 - `paper.risk.max_market_risk_score` — per-market score gate (default `0.40`, hard max `0.50`). Override only with `allow_market_risk_above_hard_max: true`. Components: volatility, jump, spread, thin book, urgency, coin-flip (news), live-game/player-prop floor 1.00.
 - `dashboard.host` / `port` / `pnl_path` — local status page and JSONL P&L history (`logs/pnl_history_{paper,demo,live}.jsonl`). Today / 7d / all-time are deltas; demo and live files never mix.

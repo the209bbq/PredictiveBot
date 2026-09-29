@@ -32,3 +32,22 @@ def test_compare_cli_refuses_when_disabled(capsys):
 def test_dashboard_page_has_no_compare_section():
     assert "<h2>Compare</h2>" not in PAGE
     assert "id=\"compare\"" not in PAGE
+
+
+def test_recorder_client_is_public_only_no_orders():
+    from polymarket_bot.guard import DemoOrderError
+
+    cfg = load_config()
+    assert cfg.record.data_host == "production"
+    client = build_client(cfg, source="live", exchange="kalshi", public_only=True)
+    assert client.public_only is True
+    assert "external-api.kalshi.com" in client.data_base_url or "kalshi.com" in client.data_base_url
+    with pytest.raises(DemoOrderError, match="public-data only"):
+        client.signed_demo("GET", "/portfolio/balance", confirm_demo=True)
+
+
+def test_load_config_isolates_repo_state_dir(tmp_path, monkeypatch):
+    monkeypatch.setenv("PMBOT_STATE_DIR", str(tmp_path / "isolated"))
+    cfg = load_config()
+    assert str(tmp_path / "isolated") in str(cfg.trading.toggle_path)
+    assert "state/trading_toggle.json" not in str(cfg.trading.toggle_path)

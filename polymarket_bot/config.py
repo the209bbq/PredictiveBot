@@ -140,6 +140,7 @@ class LoggingConfig:
     jsonl_path: Path
     report_path: Path
     state_path: Path
+    demo_state_path: Path
 
 
 @dataclass(frozen=True)
@@ -174,6 +175,7 @@ class RecordConfig:
     directory: Path
     rotate_mb: float
     max_files: int
+    data_host: str
 
 
 @dataclass(frozen=True)
@@ -203,6 +205,82 @@ class AppConfig:
     environment: str
     path: Path
     extra: dict[str, Any] = field(default_factory=dict)
+
+
+def _repo_default_path(path: Path) -> bool:
+    text = str(path)
+    if text.startswith(("state/", "logs/", "data/")):
+        return True
+    try:
+        resolved = path if path.is_absolute() else (Path.cwd() / path)
+        resolved = resolved.resolve()
+    except OSError:
+        return False
+    cwd = Path.cwd().resolve()
+    for folder in ("state", "logs", "data"):
+        try:
+            resolved.relative_to(cwd / folder)
+            return True
+        except ValueError:
+            continue
+    return False
+
+
+def _isolate_test_paths(config: AppConfig) -> None:
+    """When pytest sets PMBOT_STATE_DIR, keep tests out of the repo state/logs dirs."""
+    root = os.environ.get("PMBOT_STATE_DIR")
+    if not root:
+        return
+    base = Path(root)
+    base.mkdir(parents=True, exist_ok=True)
+
+    def rebase(path: Path, name: str) -> Path:
+        return base / name if _repo_default_path(path) else path
+
+    object.__setattr__(
+        config,
+        "trading",
+        TradingConfig(
+            config.trading.enabled,
+            rebase(config.trading.toggle_path, "trading_toggle.json"),
+            rebase(config.trading.lock_path, "trading.lock"),
+        ),
+    )
+    object.__setattr__(
+        config,
+        "logging",
+        LoggingConfig(
+            config.logging.level,
+            rebase(config.logging.jsonl_path, "decisions.jsonl"),
+            rebase(config.logging.report_path, "paper_report.txt"),
+            rebase(config.logging.state_path, "paper_state.json"),
+            rebase(config.logging.demo_state_path, "demo_state.json"),
+        ),
+    )
+    object.__setattr__(
+        config,
+        "dashboard",
+        DashboardConfig(
+            config.dashboard.host,
+            config.dashboard.port,
+            config.dashboard.refresh_seconds,
+            rebase(config.dashboard.pnl_path, "pnl_history.jsonl"),
+        ),
+    )
+    rec = config.record
+    object.__setattr__(
+        config,
+        "record",
+        RecordConfig(
+            rec.interval_seconds,
+            rec.book_levels,
+            rec.fmt,
+            rebase(rec.directory, "recordings"),
+            rec.rotate_mb,
+            rec.max_files,
+            rec.data_host,
+        ),
+    )
 
 
 def default_config_path() -> Path:
@@ -353,6 +431,7 @@ def load_config(path: str | Path | None = None, environment: str | None = None) 
             jsonl_path=Path(log_raw.get("jsonl_path", "logs/decisions.jsonl")),
             report_path=Path(log_raw.get("report_path", "logs/paper_report.txt")),
             state_path=Path(log_raw.get("state_path", "logs/paper_state.json")),
+            demo_state_path=Path(log_raw.get("demo_state_path", "logs/demo_state.json")),
         ),
         compare=CompareConfig(
             enabled=bool(compare_raw.get("enabled", False)),
@@ -379,11 +458,13 @@ def load_config(path: str | Path | None = None, environment: str | None = None) 
             directory=Path(record_raw.get("directory", "data/recordings")),
             rotate_mb=float(record_raw.get("rotate_mb", 64)),
             max_files=int(record_raw.get("max_files", 20)),
+            data_host=str(record_raw.get("data_host", "production")).lower(),
         ),
         environment=env_name,
         path=cfg_path,
         extra=raw,
     )
+    _isolate_test_paths(config)
     assert_paper_only(
         dry_run=config.dry_run,
         live_trading_enabled=config.live_trading_enabled,

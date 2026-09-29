@@ -30,8 +30,8 @@ from polymarket_bot.paper.risk import (
     snapshot_account_risk,
 )
 from polymarket_bot.daily_limits import refresh_daily_limits
-from polymarket_bot.scanner import scan_markets, scan_near_resolution
-from polymarket_bot.series_filter import is_kxhigh_same_day, maker_min_hours, maker_universe_ok
+from polymarket_bot.scanner import scan_maker_universe, scan_near_resolution
+from polymarket_bot.series_filter import is_kxhigh_same_day, maker_min_hours
 from polymarket_bot.pnl import append_pnl
 from polymarket_bot.trading import TradingLock, trading_is_on
 
@@ -118,9 +118,7 @@ def _choose_markets(
 ) -> list[MarketSnapshot]:
     if markets is not None:
         return list(markets)
-    maker_picks = [
-        s for s in scan_markets(client, config, now=now) if maker_universe_ok(s, config, now=now)
-    ][: config.paper.max_markets]
+    maker_picks = scan_maker_universe(client, config, now=now)[: config.paper.max_markets]
     near_picks = scan_near_resolution(client, config, now=now)
     seen: set[str] = set()
     chosen: list[MarketSnapshot] = []

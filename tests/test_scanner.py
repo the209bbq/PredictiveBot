@@ -5,7 +5,14 @@ from polymarket_bot.config import load_config
 from polymarket_bot.exchanges.kalshi import snapshot_from_kalshi
 from polymarket_bot.market_data.errors import BookFetchError
 from polymarket_bot.market_data.fixture_client import FixtureClient
-from polymarket_bot.scanner import format_scan_table, is_liquid, liquidity_score, scan_markets, scan_near_resolution
+from polymarket_bot.scanner import (
+    format_scan_table,
+    is_liquid,
+    liquidity_score,
+    scan_maker_universe,
+    scan_markets,
+    scan_near_resolution,
+)
 
 
 def test_scan_fixtures_returns_liquid_rows():
@@ -281,3 +288,57 @@ def test_near_resolution_uses_own_close_time_universe():
     assert "KXNEAR" in slugs
     assert "KXFAR" not in slugs
     assert all(s.hours_to_resolution is not None and s.hours_to_resolution <= 36 for s in rows)
+
+
+def test_maker_universe_scan_drops_denied_before_books():
+    cfg = load_config()
+    now = datetime(2026, 9, 29, 12, 0, tzinfo=timezone.utc)
+    nfl = {
+        "ticker": "KXNFLGAME-X",
+        "series_ticker": "KXNFLGAME",
+        "title": "PHI vs CHI",
+        "status": "active",
+        "yes_bid_dollars": "0.49",
+        "yes_ask_dollars": "0.51",
+        "close_time": "2027-01-01T00:00:00Z",
+        "fee_type": "quadratic",
+        "volume_fp": "99999",
+        "yes_bid_size_fp": "80",
+        "yes_ask_size_fp": "80",
+    }
+    ok = {
+        "ticker": "KXRT-FOO",
+        "series_ticker": "KXRT",
+        "title": "Rate",
+        "status": "active",
+        "yes_bid_dollars": "0.49",
+        "yes_ask_dollars": "0.51",
+        "close_time": "2027-01-01T00:00:00Z",
+        "fee_type": "quadratic",
+        "volume_fp": "1000",
+        "yes_bid_size_fp": "80",
+        "yes_ask_size_fp": "80",
+    }
+    book = {"orderbook_fp": {"yes_dollars": [["0.4900", "80"]], "no_dollars": [["0.4900", "80"]]}}
+    fetched: list[str] = []
+
+    class _Client:
+        source_name = "fake"
+        venue = "kalshi"
+
+        def list_markets(self, **_k):
+            return [nfl, ok]
+
+        def book(self, slug):
+            fetched.append(slug)
+            return book
+
+        def snapshot(self, market, book=None, *, now=None):
+            return snapshot_from_kalshi(market, book, now=now)
+
+        def close(self):
+            return None
+
+    rows = scan_maker_universe(_Client(), cfg, now=now)
+    assert [s.slug for s in rows] == ["KXRT-FOO"]
+    assert "KXNFLGAME-X" not in fetched

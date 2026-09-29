@@ -136,7 +136,7 @@ async function load(){
   );
   el('positions', table((s.positions||[]).map(p=>[p.market, p.qty, p.avg_price]), ['market','qty','avg']));
   el('orders', table((s.resting_orders||[]).map(o=>[o.market||o.ticker, o.side, o.price, o.qty||o.count]), ['market','side','price','qty']));
-  el('fills', table((s.fills||[]).slice(0,20).map(f=>[f.market||f.ticker, f.side, f.price||f.yes_price_dollars, f.qty||f.count, f.strategy||'', f.same_day?'same_day':'']), ['market','side','price','qty','strategy','same_day']));
+  el('fills', table((s.fills||[]).slice(0,20).map(f=>[f.market||f.ticker, f.side, f.price||f.yes_price_dollars, f.qty||f.count_fp||f.count, f.strategy||'', f.same_day?'same_day':'']), ['market','side','price','qty','strategy','same_day']));
   el('markets', table((s.markets||[]).map(m=>{
     const why = Object.entries(m.components||{}).map(([k,v])=>k+'='+(Number(v)<=1?(Number(v)*100).toFixed(0)+'%':v)).join(', ');
     const over = m.over_threshold ? ' OVER' : '';
@@ -220,7 +220,8 @@ def _read_exchange(config: AppConfig, slugs: list[str]) -> dict[str, Any]:
     try:
         from polymarket_bot.exchanges.factory import build_client
 
-        client = build_client(config, source="live", exchange=config.exchange)
+        src = "kalshi-demo-data" if config.environment == "demo" else "live"
+        client = build_client(config, source=src, exchange=config.exchange)
         try:
             getter = getattr(client, "trading_hours", None)
             if callable(getter):
@@ -244,9 +245,22 @@ def _read_exchange(config: AppConfig, slugs: list[str]) -> dict[str, Any]:
     return out
 
 
+def _normalize_fill(row: dict[str, Any]) -> dict[str, Any]:
+    from polymarket_bot.kalshi_account import fill_qty
+
+    out = dict(row)
+    qty = fill_qty(row)
+    if qty is not None:
+        out["qty"] = qty
+    out["market"] = row.get("market") or row.get("ticker") or row.get("market_ticker")
+    return out
+
+
 def _pick_state(config: AppConfig) -> tuple[dict[str, Any], str]:
     paper = _read_json(config.logging.state_path)
-    demo = _read_json(Path("logs/demo_state.json"))
+    demo = _read_json(config.logging.demo_state_path)
+    if config.environment == "demo":
+        return (demo or {"demo": True}), "demo"
     if demo and (not paper or demo.get("demo")):
         if demo.get("ts") or demo.get("ending_cash") or demo.get("quotes_placed") is not None:
             if not paper or bool(demo.get("demo")):
@@ -280,14 +294,16 @@ def build_snapshot(
         rows = raw_pos.get("market_positions") if isinstance(raw_pos, dict) else raw_pos
         if isinstance(rows, list):
             for row in rows:
+                from polymarket_bot.kalshi_account import position_avg_price, position_qty
+
                 positions.append(
                     {
                         "market": row.get("ticker") or row.get("market_ticker"),
-                        "qty": row.get("position") or row.get("qty"),
-                        "avg_price": row.get("average_price") or row.get("avg_price"),
+                        "qty": position_qty(row) or row.get("position") or row.get("qty"),
+                        "avg_price": position_avg_price(row) or row.get("average_price") or row.get("avg_price"),
                     }
                 )
-    fills = list(maker.get("fills") or state.get("fills") or [])
+    fills = [_normalize_fill(row) if isinstance(row, dict) else row for row in (maker.get("fills") or state.get("fills") or [])]
     scores = state.get("market_risk") or {}
     cap = _dec(config.paper.risk.max_market_risk_score)
     markets = []

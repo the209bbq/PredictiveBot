@@ -5,6 +5,7 @@ from decimal import Decimal
 from polymarket_bot.config import RecordConfig, load_config
 from polymarket_bot.exchanges.kalshi import snapshot_from_kalshi
 from polymarket_bot.market_data import TapeTrade
+from polymarket_bot.market_data.errors import BookFetchError
 from polymarket_bot.recorder import candles_from_tape, run_record, snapshot_row
 
 
@@ -60,7 +61,7 @@ def test_record_writes_gzip_jsonl(tmp_path):
     object.__setattr__(
         cfg,
         "record",
-        RecordConfig(1, 2, "jsonl", tmp_path / "rec", 64, 5),
+        RecordConfig(1, 2, "jsonl", tmp_path / "rec", 64, 5, "production"),
     )
     now = datetime(2026, 9, 29, 12, 0, tzinfo=timezone.utc)
     client = _RecordFake()
@@ -126,10 +127,37 @@ def test_record_prefers_kalshi_candlesticks(tmp_path):
     object.__setattr__(
         cfg,
         "record",
-        RecordConfig(1, 2, "jsonl", tmp_path / "rec", 64, 5),
+        RecordConfig(1, 2, "jsonl", tmp_path / "rec", 64, 5, "production"),
     )
     path = run_record(cfg, _WithCandles(), ticks=1, sleep=False)
     row = json.loads(gzip.open(path, "rt", encoding="utf-8").read().strip().splitlines()[0])
     assert row["tape"][0]["qty"] == "3"
     assert row["candles_1m"][0]["close"] == "0.50"
     assert row["candles_1m"][0]["volume"] == "12"
+
+
+def test_record_backs_off_on_429(tmp_path):
+    class _Flaky(_RecordFake):
+        def __init__(self) -> None:
+            super().__init__()
+            self.calls = 0
+
+        def list_markets(self, **k):
+            self.calls += 1
+            if self.calls == 1:
+                raise BookFetchError("Kalshi GET /markets failed after retries: HTTP 429")
+            return super().list_markets(**k)
+
+    cfg = load_config()
+    object.__setattr__(
+        cfg,
+        "record",
+        RecordConfig(1, 2, "jsonl", tmp_path / "rec", 64, 5, "production"),
+    )
+    path = run_record(cfg, _Flaky(), ticks=2, sleep=False)
+    assert path.exists()
+
+
+def test_record_default_data_host_is_production():
+    cfg = load_config()
+    assert cfg.record.data_host == "production"

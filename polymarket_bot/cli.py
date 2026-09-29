@@ -194,7 +194,7 @@ def cmd_kalshi_demo_session(args: argparse.Namespace) -> int:
         client.close()
     report = format_demo_report(state)
     report_path = Path("logs/demo_report.txt")
-    state_path = Path("logs/demo_state.json")
+    state_path = config.logging.demo_state_path
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(report)
     state_path.write_text(json.dumps(state, default=json_default, indent=2))
@@ -248,7 +248,16 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
 
 def cmd_record(args: argparse.Namespace) -> int:
     config = load_config(args.config)
-    client = build_client(config, source=args.source, exchange="kalshi", fixture=args.fixture)
+    source = args.source
+    if source == "live" and config.record.data_host == "demo":
+        source = "kalshi-demo-data"
+    client = build_client(
+        config,
+        source=source,
+        exchange="kalshi",
+        fixture=args.fixture,
+        public_only=True,
+    )
     try:
         path = run_record(
             config,

@@ -52,6 +52,7 @@ def build_client(
     source: str,
     exchange: str | None = None,
     fixture: str | None = None,
+    public_only: bool = False,
 ):
     venue = (exchange or config.exchange).lower()
     assert_venue_enabled(config, venue)
@@ -67,10 +68,14 @@ def build_client(
         return client
     if source in {"live", "public"}:
         if venue == "kalshi":
-            return KalshiClient(config)
+            return KalshiClient(config, public_only=public_only)
         if is_polymarket_venue(venue):
             return PolymarketClient(config)
         raise SystemExit(f"unknown exchange {venue}")
     if source == "kalshi-demo-data":
-        return KalshiClient(config, data_base_url=config.kalshi.demo_base_url)
+        return KalshiClient(
+            config,
+            data_base_url=config.kalshi.demo_base_url,
+            public_only=public_only,
+        )
     raise SystemExit(f"unknown source {source}")

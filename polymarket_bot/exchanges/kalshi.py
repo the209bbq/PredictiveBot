@@ -127,8 +127,15 @@ def snapshot_from_kalshi(
 class KalshiClient:
     venue = "kalshi"
 
-    def __init__(self, config: AppConfig, *, data_base_url: str | None = None) -> None:
+    def __init__(
+        self,
+        config: AppConfig,
+        *,
+        data_base_url: str | None = None,
+        public_only: bool = False,
+    ) -> None:
         self.config = config
+        self.public_only = public_only
         self.data_base_url = (data_base_url or config.kalshi.market_data_base_url).rstrip("/")
         self.demo_base_url = config.kalshi.demo_base_url.rstrip("/")
         self._interval = config.kalshi.min_request_interval_seconds
@@ -353,6 +360,8 @@ class KalshiClient:
         params: dict[str, Any] | None = None,
         confirm_demo: bool = True,
     ) -> dict[str, Any]:
+        if self.public_only:
+            raise DemoOrderError("This Kalshi client is public-data only; there is no order path.")
         self._assert_demo(confirm_demo)
         key_id, private_key = load_demo_credentials()
         return signed_request(

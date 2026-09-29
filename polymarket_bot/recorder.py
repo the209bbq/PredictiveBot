@@ -12,8 +12,8 @@ from typing import Any
 from polymarket_bot.config import AppConfig
 from polymarket_bot.logging_utils import json_default
 from polymarket_bot.market_data import BookLevel, MarketSnapshot, TapeTrade
-from polymarket_bot.scanner import scan_markets
-from polymarket_bot.series_filter import maker_universe_ok
+from polymarket_bot.market_data.errors import BookFetchError
+from polymarket_bot.scanner import scan_maker_universe
 
 
 def _top_levels(levels: list[BookLevel], n: int) -> list[dict[str, str]]:
@@ -206,27 +206,35 @@ def run_record(
     )
     n_ticks = ticks if ticks is not None else 1
     last_path: Path | None = None
+    backoff = max(1.0, float(config.record.interval_seconds))
     try:
         for i in range(n_ticks):
             tick_now = datetime.now(timezone.utc)
-            rows = [
-                snap
-                for snap in scan_markets(client, config, now=tick_now)
-                if maker_universe_ok(snap, config, now=tick_now)
-            ]
+            try:
+                rows = scan_maker_universe(client, config, now=tick_now)
+            except (BookFetchError, Exception) as exc:
+                print(f"{tick_now.isoformat()} record tick {i} backoff: {exc}", flush=True)
+                if sleep:
+                    time.sleep(backoff)
+                    backoff = min(backoff * 2, 60.0)
+                continue
+            backoff = max(1.0, float(config.record.interval_seconds))
             for snap in rows:
                 try:
                     live = _refresh(client, snap, tick_now)
+                except (BookFetchError, Exception):
+                    continue
+                try:
+                    last_path = writer.write(
+                        snapshot_row(
+                            live,
+                            now=tick_now,
+                            levels=config.record.book_levels,
+                            candles=_candles_for(client, live, tick_now),
+                        )
+                    )
                 except Exception:
                     continue
-                last_path = writer.write(
-                    snapshot_row(
-                        live,
-                        now=tick_now,
-                        levels=config.record.book_levels,
-                        candles=_candles_for(client, live, tick_now),
-                    )
-                )
             if sleep and i < n_ticks - 1:
                 time.sleep(max(0.0, config.record.interval_seconds))
     finally:

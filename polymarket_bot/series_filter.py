@@ -201,18 +201,40 @@ def event_blackout(snap: MarketSnapshot, config: AppConfig, now: datetime) -> bo
         prefixes = [str(x).upper() for x in (event.get("series") or [])]
         if not prefixes or _starts_with_any(series, prefixes):
             return True
-    aaa_on = bool(extra.get("aaa_blackout_enabled", False))
-    aaa_start = extra.get("aaa_blackout_start")
-    if aaa_on and aaa_start and series.startswith("KXAAA"):
-        try:
-            hh, mm = str(aaa_start).split(":")
-            local = now.astimezone(PT)
-            mark = local.replace(hour=int(hh), minute=int(mm), second=0, microsecond=0)
-            if _in_blackout(local, mark, int(extra.get("aaa_blackout_minutes", 30))):
-                return True
-        except ValueError:
-            return False
+    if gas_blackout(snap, config, now):
+        return True
     return False
+
+
+def _hhmm_minutes(value: Any, default: str) -> int:
+    raw = str(value or default)
+    hh, mm = raw.split(":")
+    return int(hh) * 60 + int(mm)
+
+
+def _in_hhmm_window(now_minutes: int, start: int, end: int) -> bool:
+    if start <= end:
+        return start <= now_minutes <= end
+    return now_minutes >= start or now_minutes <= end
+
+
+def gas_blackout(snap: MarketSnapshot, config: AppConfig, now: datetime) -> bool:
+    """AAA gasoline: evening pre-close on daily, morning window for anything still open."""
+    series = series_ticker(snap)
+    slug = (snap.slug or "").upper()
+    if not (series.startswith("KXAAA") or slug.startswith("KXAAA")):
+        return False
+    extra = (config.extra.get("paper") or {}).get("series") or {}
+    local = now.astimezone(PT)
+    mins = local.hour * 60 + local.minute
+    eve_start = _hhmm_minutes(extra.get("aaa_evening_stop"), "20:00")
+    eve_end = _hhmm_minutes(extra.get("aaa_close"), "20:59")
+    morn_start = _hhmm_minutes(extra.get("aaa_morning_blackout_start"), "03:30")
+    morn_end = _hhmm_minutes(extra.get("aaa_morning_blackout_end"), "07:00")
+    if series.startswith("KXAAAGASD") or slug.startswith("KXAAAGASD"):
+        if _in_hhmm_window(mins, eve_start, eve_end):
+            return True
+    return _in_hhmm_window(mins, morn_start, morn_end)
 
 
 def touch_queue(snap: MarketSnapshot) -> Decimal:
@@ -221,6 +243,30 @@ def touch_queue(snap: MarketSnapshot) -> Decimal:
     if bid and ask:
         return min(bid, ask)
     return bid or ask or Decimal("0")
+
+
+def listed_market_ok(
+    market: dict[str, Any],
+    config: AppConfig,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    """Pre-book allow/deny using list metadata so tennis/NFL never consume book fetches."""
+    from polymarket_bot.exchanges.kalshi import snapshot_from_kalshi
+
+    snap = snapshot_from_kalshi(market, None, now=now)
+    if not filter_enabled(config) or not applies_to(snap):
+        return True
+    allow, deny = _prefixes(config)
+    extra = (config.extra.get("paper") or {}).get("series") or {}
+    skip_fees = bool(extra.get("skip_maker_fee_series", True))
+    if skip_fees and _has_maker_fees(snap):
+        return False
+    if _is_denied(snap, deny):
+        return False
+    if not _is_allowed(snap, allow):
+        return False
+    return True
 
 
 def maker_universe_ok(
