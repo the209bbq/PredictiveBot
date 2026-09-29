@@ -202,6 +202,9 @@ paper:
     late_entry_enabled: true
     fill_tag: favorites_late
     fills_path: data/favorites_fills.jsonl
+    # Re-scan the 15m–6h window this often; quote every kept market up to max_markets.
+    rescan_minutes: 10
+    max_markets: 5
     allow:
       - KXHIGH
       - KXRAIN
@@ -222,6 +225,7 @@ logging:
   jsonl_path: logs/decisions.jsonl
   report_path: logs/paper_report.txt
   state_path: logs/paper_state.json
+  demo_state_path: logs/demo_state.json
 
 dashboard:
   host: 127.0.0.1

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random
 import time
 import uuid
 from datetime import datetime, timezone
@@ -28,6 +29,22 @@ from polymarket_bot.market_data.normalize import depth_from_levels, hours_to_res
 
 _RETRY_STATUSES = {429, 500, 502, 503, 504}
 CLIENT_ORDER_PREFIX = "pmbot-"
+
+
+def backoff_delay(
+    attempt: int,
+    *,
+    base: float = 0.25,
+    cap: float = 8.0,
+    jitter: bool = True,
+    rng: random.Random | None = None,
+) -> float:
+    """Exponential backoff with optional equal jitter (50%–150% of the slot)."""
+    delay = min(base * (2 ** max(0, attempt)), cap)
+    if not jitter:
+        return delay
+    picker = rng if rng is not None else random
+    return delay * (0.5 + picker.random())
 
 ONE = Decimal("1")
 
@@ -156,22 +173,19 @@ class KalshiClient:
 
     def _get(self, base: str, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         url = f"{base}{path}"
-        delay = 0.25
         last_exc: Exception | None = None
         attempts = max(1, self.config.api.max_retries + 2)
-        for _ in range(attempts):
+        for attempt in range(attempts):
             self._pace()
             try:
                 response = self._http.get(url, params=params)
             except httpx.HTTPError as exc:
                 last_exc = exc
-                time.sleep(delay)
-                delay = min(delay * 2, 8)
+                time.sleep(backoff_delay(attempt))
                 continue
             if response.status_code in _RETRY_STATUSES:
                 last_exc = RuntimeError(f"HTTP {response.status_code}")
-                time.sleep(delay)
-                delay = min(delay * 2, 8)
+                time.sleep(backoff_delay(attempt))
                 continue
             try:
                 response.raise_for_status()

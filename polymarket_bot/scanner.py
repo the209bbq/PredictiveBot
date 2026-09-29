@@ -6,6 +6,7 @@ import logging
 from collections import Counter
 from datetime import datetime, timezone
 from decimal import Decimal
+from typing import Any
 
 from polymarket_bot.config import AppConfig, ScannerConfig
 from polymarket_bot.market_data import MarketDataClient, MarketSnapshot
@@ -16,6 +17,15 @@ from polymarket_bot.series_filter import listed_market_ok, maker_universe_ok, to
 
 log = logging.getLogger("polymarket_bot")
 _LAST_SCAN_SUMMARY = ""
+_SERIES_CACHE: dict[str, Any] = {"at": None, "rows": None, "ttl": 1800.0}
+_LAST_SCAN_COVERAGE: dict[str, Any] = {}
+
+
+def clear_scan_caches() -> None:
+    """Drop cached GET /series rows (tests and a forced refresh)."""
+    _SERIES_CACHE["at"] = None
+    _SERIES_CACHE["rows"] = None
+    _LAST_SCAN_COVERAGE.clear()
 
 
 def _snapshot(client: MarketDataClient, market: dict, book, now, config: AppConfig) -> MarketSnapshot:
@@ -66,6 +76,10 @@ def last_scan_summary() -> str:
     return _LAST_SCAN_SUMMARY
 
 
+def last_scan_coverage() -> dict[str, Any]:
+    return dict(_LAST_SCAN_COVERAGE)
+
+
 def _record_scan_summary(text: str) -> None:
     global _LAST_SCAN_SUMMARY
     _LAST_SCAN_SUMMARY = text
@@ -90,17 +104,13 @@ def _list_favorites_markets(client: MarketDataClient, config: AppConfig) -> list
             found.append(market)
 
     series_ids: list[str] = []
-    lister = getattr(client, "list_series", None)
-    if callable(lister):
-        try:
-            for row in lister() or []:
-                if not isinstance(row, dict):
-                    continue
-                ticker = str(row.get("ticker") or row.get("series_ticker") or "").upper()
-                if ticker and any(ticker.startswith(p) for p in prefixes):
-                    series_ids.append(ticker)
-        except Exception as exc:
-            log.info("favorites_scan series_list_error=%s", exc)
+    catalog = _cached_series_catalog(client)
+    for row in catalog:
+        if not isinstance(row, dict):
+            continue
+        ticker = str(row.get("ticker") or row.get("series_ticker") or "").upper()
+        if ticker and any(ticker.startswith(p) for p in prefixes):
+            series_ids.append(ticker)
 
     for prefix in prefixes:
         if prefix not in series_ids:
@@ -111,7 +121,10 @@ def _list_favorites_markets(client: MarketDataClient, config: AppConfig) -> list
     series_ids = exact + extra[:24]
     log.info("favorites_scan series_queried=%s", series_ids)
 
+    attempted = 0
+    failed: list[str] = []
     for series in series_ids:
+        attempted += 1
         try:
             batch = client.list_markets(
                 limit=config.scanner.max_markets_to_list,
@@ -122,10 +135,27 @@ def _list_favorites_markets(client: MarketDataClient, config: AppConfig) -> list
         except TypeError:
             batch = None
         except Exception as exc:
+            failed.append(series)
             log.info("favorites_scan series_markets_error series=%s err=%s", series, exc)
             continue
         if batch:
             _add(batch)
+
+    coverage = {
+        "series_attempted": attempted,
+        "series_failed": len(failed),
+        "series_ok": attempted - len(failed),
+        "series_failed_ids": failed[:12],
+        "series_queried": list(series_ids),
+    }
+    _LAST_SCAN_COVERAGE.update(coverage)
+    log.info(
+        "favorites_scan coverage series_attempted=%s series_failed=%s series_ok=%s failed_ids=%s",
+        coverage["series_attempted"],
+        coverage["series_failed"],
+        coverage["series_ok"],
+        coverage["series_failed_ids"],
+    )
 
     if not found:
         try:
@@ -139,6 +169,29 @@ def _list_favorites_markets(client: MarketDataClient, config: AppConfig) -> list
         except Exception as exc:
             log.info("favorites_scan fallback_list_error=%s", exc)
     return found
+
+
+def _cached_series_catalog(client: MarketDataClient) -> list[dict]:
+    """Reuse GET /series for TTL seconds; market re-scans hit only needed series."""
+    now = datetime.now(timezone.utc)
+    cached_at = _SERIES_CACHE.get("at")
+    cached_rows = _SERIES_CACHE.get("rows")
+    ttl = float(_SERIES_CACHE.get("ttl") or 1800.0)
+    if cached_at is not None and cached_rows is not None and (now - cached_at).total_seconds() < ttl:
+        return list(cached_rows)
+    rows: list[dict] = []
+    lister = getattr(client, "list_series", None)
+    if callable(lister):
+        try:
+            rows = [row for row in (lister() or []) if isinstance(row, dict)]
+        except Exception as exc:
+            log.info("favorites_scan series_list_error=%s", exc)
+            if cached_rows:
+                return list(cached_rows)
+            return []
+    _SERIES_CACHE["at"] = now
+    _SERIES_CACHE["rows"] = rows
+    return list(rows)
 
 
 def _list_raw(client: MarketDataClient, config: AppConfig) -> list[dict]:
@@ -294,13 +347,19 @@ def scan_maker_universe(
                 " no eligible markets in the 15m–6h window on this host "
                 "(demo may have none at this hour; pin --ticker if you have one)."
             )
+        coverage = last_scan_coverage()
         _record_scan_summary(
-            "favorites_scan listed=%s after_list=%s books=%s kept=%s by_reason=%s examples=%s%s"
+            "favorites_scan listed=%s after_list=%s books=%s kept=%s "
+            "series_attempted=%s series_failed=%s series_ok=%s "
+            "by_reason=%s examples=%s%s"
             % (
                 len(raw),
                 len(listed),
                 len(snapshots),
                 len(kept),
+                coverage.get("series_attempted", 0),
+                coverage.get("series_failed", 0),
+                coverage.get("series_ok", 0),
                 dict(reasons),
                 examples,
                 empty_note,

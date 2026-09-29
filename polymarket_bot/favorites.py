@@ -109,6 +109,8 @@ DEFAULTS = {
     "late_entry_enabled": True,
     "fill_tag": FILL_TAG,
     "fills_path": "data/favorites_fills.jsonl",
+    "rescan_minutes": 10.0,
+    "max_markets": 5,
 }
 
 
@@ -131,6 +133,8 @@ class FavoritesSettings:
     fill_tag: str
     fills_path: Path
     allow: tuple[str, ...]
+    rescan_minutes: float
+    max_markets: int
 
 
 def is_favorites_mode(config: AppConfig) -> bool:
@@ -152,6 +156,8 @@ def favorites_settings(config: AppConfig) -> FavoritesSettings:
         sides = tuple(s for s in sides if s != "yes") or ("no",)
     exit_raw = raw.get("exit_if_below", DEFAULTS["exit_if_below"])
     allow = tuple(str(x).upper() for x in (raw.get("allow") or DEFAULT_ALLOW))
+    fallback_cap = getattr(getattr(config, "paper", None), "max_markets", None)
+    max_markets = int(raw.get("max_markets", fallback_cap if fallback_cap is not None else DEFAULTS["max_markets"]))
     return FavoritesSettings(
         min_price=Decimal(str(raw.get("min_price", DEFAULTS["min_price"]))),
         max_price=Decimal(str(raw.get("max_price", DEFAULTS["max_price"]))),
@@ -172,6 +178,8 @@ def favorites_settings(config: AppConfig) -> FavoritesSettings:
         fill_tag=str(raw.get("fill_tag", FILL_TAG)),
         fills_path=_fills_path(str(raw.get("fills_path", DEFAULTS["fills_path"]))),
         allow=allow,
+        rescan_minutes=float(raw.get("rescan_minutes", DEFAULTS["rescan_minutes"])),
+        max_markets=max(1, max_markets),
     )
 
 

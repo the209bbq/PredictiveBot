@@ -14,6 +14,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from polymarket_bot.config import AppConfig
+from polymarket_bot.demo.session import resolve_demo_state_path
 from polymarket_bot.logging_utils import json_default
 from polymarket_bot.pnl import env_name, history_path, load_history, snapshot_from_state, summarize
 from polymarket_bot.trading import set_trading_enabled, trading_status
@@ -304,7 +305,10 @@ def _normalize_fill(row: dict[str, Any]) -> dict[str, Any]:
 
 def _pick_state(config: AppConfig) -> tuple[dict[str, Any], str]:
     paper = _read_json(config.logging.state_path)
-    demo = _read_json(config.logging.demo_state_path)
+    demo_path = resolve_demo_state_path(config)
+    demo = _read_json(demo_path)
+    if not demo and demo_path != config.logging.demo_state_path:
+        demo = _read_json(config.logging.demo_state_path)
     if config.environment == "demo":
         return (demo or {"demo": True}), "demo"
     if demo and (not paper or demo.get("demo")):
@@ -411,7 +415,7 @@ def build_snapshot(
             "pt_date": trading.get("pt_date"),
         },
         "positions": positions,
-        "resting_orders": list(state.get("resting_leftover") or []),
+        "resting_orders": list(state.get("resting_orders") or state.get("resting_leftover") or []),
         "fills": fills[-20:],
         "markets": markets,
         "market_risk_cap": state.get("market_risk_cap"),

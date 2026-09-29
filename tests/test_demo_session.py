@@ -27,6 +27,7 @@ class _DemoFake:
         self.cancelled = 0
         self.cancelled_all = 0
         self.cancelled_bot = 0
+        self.cancelled_one: list[dict] = []
         self.shutdowns = 0
         self.shutdown_emergency: bool | None = None
         self._positions: dict = {"market_positions": []}
@@ -79,6 +80,10 @@ class _DemoFake:
         self.cancelled += 1
         self.cancelled_bot += 1
         return {"cancelled": 1}
+
+    def cancel_demo_order(self, order_id, *, ticker=None, confirm_demo=False):
+        self.cancelled_one.append({"order_id": order_id, "ticker": ticker})
+        return {}
 
     def list_demo_orders(self, *, status="resting", confirm_demo=False):
         return []

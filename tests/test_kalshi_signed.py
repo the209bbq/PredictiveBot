@@ -4,7 +4,7 @@ from decimal import Decimal
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from polymarket_bot.config import load_config
-from polymarket_bot.exchanges.kalshi import KalshiClient, signed_request
+from polymarket_bot.exchanges.kalshi import KalshiClient, backoff_delay, signed_request
 from polymarket_bot.guard import DemoOrderError
 
 
@@ -17,6 +17,10 @@ class _Resp:
 
     def json(self):
         return self._payload
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
 
 
 class _Client:
@@ -216,3 +220,47 @@ def test_last_trade_helper_decimal():
         assert client.last_trade("T") == Decimal("0.33")
     finally:
         client.close()
+
+
+def test_backoff_delay_exponential_and_jitter():
+    import random
+
+    assert backoff_delay(0, jitter=False) == 0.25
+    assert backoff_delay(1, jitter=False) == 0.5
+    assert backoff_delay(2, jitter=False) == 1.0
+    assert backoff_delay(10, jitter=False) == 8.0
+    rng = random.Random(0)
+    jittered = [backoff_delay(1, rng=rng) for _ in range(20)]
+    assert min(jittered) >= 0.25
+    assert max(jittered) <= 0.75
+    assert len(set(round(x, 6) for x in jittered)) > 1
+
+
+def test_get_retries_429_with_jittered_backoff(monkeypatch):
+    sleeps: list[float] = []
+    monkeypatch.setattr(time, "sleep", lambda s: sleeps.append(s))
+    cfg = load_config()
+    client = KalshiClient(cfg)
+    client._interval = 0
+
+    class _Http:
+        def __init__(self):
+            self.n = 0
+
+        def get(self, url, params=None):
+            self.n += 1
+            if self.n < 3:
+                return _Resp(429, "rate limited")
+            return _Resp(200, payload={"series": []})
+
+        def close(self):
+            return None
+
+    client._http = _Http()
+    try:
+        out = client._get("https://demo-api.kalshi.co/trade-api/v2", "/series")
+    finally:
+        client.close()
+    assert out == {"series": []}
+    assert len(sleeps) >= 2
+    assert any(s > 0 for s in sleeps)
